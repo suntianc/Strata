@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Strata | 碎片时间</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@400;500;600&family=Merriweather:ital,wght@0,300;0,400;0,700;1,400&display=swap" rel="stylesheet">
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              stone: {
+                50: '#F9F9F7', // Canvas
+                100: '#F2F2F0', // Sidebar
+                200: '#E6E6E6', // Timeline line
+                300: '#DFE6E9', // Borders
+                800: '#2D3436', // Primary Text
+              },
+              teal: {
+                800: '#006266', // Primary Action
+                900: '#004d4f',
+                400: '#4ECDC4', // Dark mode primary
+              },
+              terracotta: {
+                500: '#E17055', // Accent
+                100: '#FBE6E0', // Accent light
+              },
+              basalt: {
+                950: '#181825', // Deepest
+                900: '#1E1E2E', // Dark mode bg
+                800: '#252538', // Dark mode card
+                700: '#32324A', // Borders/Hover
+              }
+            },
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'],
+              serif: ['Merriweather', 'serif'],
+              mono: ['Fira Code', 'monospace'],
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      /* Custom scrollbar for the "Strata" feel */
+      ::-webkit-scrollbar {
+        width: 6px;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      ::-webkit-scrollbar-thumb {
+        background-color: #DFE6E9;
+        border-radius: 3px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background-color: #B2BEC3;
+      }
+      
+      /* Dark mode scrollbar */
+      .dark ::-webkit-scrollbar-thumb {
+        background-color: #32324A;
+      }
+      .dark ::-webkit-scrollbar-thumb:hover {
+        background-color: #454560;
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react/": "https://aistudiocdn.com/react@^19.2.1/",
+    "react": "https://aistudiocdn.com/react@^19.2.1",
+    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.559.0",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.32.0",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/"
+  }
+}
+</script>
+</head>
+  <body class="bg-stone-50 dark:bg-basalt-900 text-stone-800 dark:text-stone-200 antialiased font-sans overflow-hidden transition-colors duration-300">
+    <div id="root"></div>
+  </body>
+</html>
