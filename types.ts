@@ -1,3 +1,4 @@
+
 export interface Attachment {
   id: string;
   type: 'pdf' | 'excel' | 'image' | 'code';
@@ -18,6 +19,7 @@ export interface Message {
   highlighted?: boolean;
   isArchived?: boolean;
   suggestedProjectId?: string; // For AI Inbox cleaning
+  relatedIds?: string[]; // IDs of related messages for Info Mode
 }
 
 export interface TaskNode {
@@ -34,4 +36,23 @@ export interface ChatMessage {
   content: string;
   citations?: string[]; // IDs of messages cited
   isThinking?: boolean;
+}
+
+export interface ModelConfig {
+  provider: 'gemini' | 'ollama' | 'openai' | 'custom';
+  modelName: string;
+  baseUrl?: string;
+  apiKey?: string;
+}
+
+export interface UserProfile {
+  name: string;
+  role: string;
+  avatarUrl?: string;
+}
+
+export interface AppSettings {
+  profile: UserProfile;
+  llm: ModelConfig;
+  embedding: ModelConfig;
 }

@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { MessageStream } from './components/MessageStream';
-import { RightPanel } from './components/RightPanel';
+import { RightPanel, RightPanelMode } from './components/RightPanel';
 import { TaskNode, Message, Attachment } from './types';
 import { suggestTaskForMessages } from './services/geminiService';
+import { LanguageProvider } from './contexts/LanguageContext';
+import { SettingsProvider } from './contexts/SettingsContext';
+import { SettingsModal } from './components/SettingsModal';
 
 // Mock Data
 const INITIAL_TASKS: TaskNode[] = [
@@ -37,7 +40,8 @@ const INITIAL_MESSAGES: Message[] = [
     author: 'user',
     tags: ['literature', 'transformers'],
     attachments: [{ id: 'a1', type: 'pdf', name: 'Attention_is_all_you_need.pdf', meta: '14 pages' }],
-    projectId: 'p1'
+    projectId: 'p1',
+    relatedIds: ['msg-002']
   },
   {
     id: 'msg-002',
@@ -47,7 +51,8 @@ const INITIAL_MESSAGES: Message[] = [
     author: 'user',
     tags: ['experiment', 'data'],
     attachments: [{ id: 'a2', type: 'excel', name: 'run_402_metrics.xlsx', meta: '24KB' }],
-    projectId: 'p1'
+    projectId: 'p1',
+    relatedIds: ['msg-001']
   },
   {
     id: 'msg-003',
@@ -61,12 +66,16 @@ const INITIAL_MESSAGES: Message[] = [
   }
 ];
 
-const App: React.FC = () => {
+const AppContent: React.FC = () => {
   const [tasks, setTasks] = useState<TaskNode[]>(INITIAL_TASKS);
   const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
   const [activeProjectId, setActiveProjectId] = useState<string | null>('p1');
-  const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  
+  // Right Panel State
+  const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>('collapsed');
   const [selectedContextMessage, setSelectedContextMessage] = useState<Message | null>(null);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+  
   const [isDarkMode, setIsDarkMode] = useState(false);
   
   // Search State
@@ -74,6 +83,9 @@ const App: React.FC = () => {
 
   // Inbox Organizing State
   const [isOrganizing, setIsOrganizing] = useState(false);
+
+  // Settings State
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   // Derived state for filtering
   const displayedMessages = messages.filter(m => {
@@ -88,9 +100,6 @@ const App: React.FC = () => {
 
     // 3. Project filter
     if (activeProjectId) {
-      // Logic for "Context Inheritance" - showing parent messages in child not implemented in mock completely, 
-      // but simplistic view: show specific project messages.
-      // Or if root project, show all children? For now strict match for demo clarity.
       return m.projectId === activeProjectId || (activeProjectId === 'p1' && m.projectId?.startsWith('p')); 
     } else {
       // Inbox View
@@ -168,7 +177,14 @@ const App: React.FC = () => {
 
   const handleSelectMessage = (message: Message) => {
     setSelectedContextMessage(message);
-    setRightPanelOpen(true);
+    setRightPanelMode('info'); // Open Info Mode on select
+  };
+
+  const handleCitationClick = (id: string) => {
+    setHighlightedMessageId(id);
+    // Clear highlight after animation usually, but keeping it selected is fine for now
+    // Or we could auto-clear after 2 seconds
+    setTimeout(() => setHighlightedMessageId(null), 2000);
   };
 
   const toggleTheme = () => setIsDarkMode(!isDarkMode);
@@ -185,6 +201,7 @@ const App: React.FC = () => {
           isDarkMode={isDarkMode}
           toggleTheme={toggleTheme}
           onSearch={setSearchQuery}
+          onOpenSettings={() => setIsSettingsOpen(true)}
         />
 
         {/* Main Content */}
@@ -193,6 +210,7 @@ const App: React.FC = () => {
             messages={displayedMessages}
             projectId={activeProjectId}
             tasks={tasks}
+            highlightedMessageId={highlightedMessageId}
             onSendMessage={handleSendMessage}
             onSelectMessage={handleSelectMessage}
             onUpdateMessage={handleUpdateMessage}
@@ -206,15 +224,27 @@ const App: React.FC = () => {
 
         {/* Right Panel (AI) */}
         <RightPanel 
-          isOpen={rightPanelOpen} 
-          onClose={() => {
-            setRightPanelOpen(false);
-            setSelectedContextMessage(null);
-          }}
+          mode={rightPanelMode}
+          setMode={setRightPanelMode}
           contextMessage={selectedContextMessage}
+          onCitationClick={handleCitationClick}
+          messages={messages}
         />
       </div>
+
+      {/* Settings Modal */}
+      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
     </div>
+  );
+};
+
+const App: React.FC = () => {
+  return (
+    <LanguageProvider>
+      <SettingsProvider>
+        <AppContent />
+      </SettingsProvider>
+    </LanguageProvider>
   );
 };
 

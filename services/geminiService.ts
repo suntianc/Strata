@@ -28,15 +28,21 @@ const flattenTasks = (nodes: TaskNode[]): {id: string, title: string}[] => {
 
 export const generateAnalysis = async (
   prompt: string, 
-  contextMessages: string[]
+  contextMessages: string[],
+  language: 'en' | 'zh' = 'en'
 ): Promise<string> => {
   try {
     const ai = getClient();
     const contextStr = contextMessages.join('\n---\n');
+    const languageInstruction = language === 'zh' 
+      ? "Reply in Simplified Chinese (简体中文). Keep technical terms if necessary." 
+      : "Reply in English.";
+
     const fullPrompt = `
       System Instruction: You are "Strata Copilot", a research assistant. 
       Your output should look like an analysis report. 
       Use Markdown. Be concise, academic, and structured.
+      ${languageInstruction}
       
       Context Data (Strata layers):
       ${contextStr}
