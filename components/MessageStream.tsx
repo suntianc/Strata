@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Message, Attachment, TaskNode } from '../types';
-import { FileText, FileSpreadsheet, Paperclip, Hash, Send, Clock, MoreHorizontal, File, Wand2, Archive, Edit2, Check, X, ArrowRight, Calendar, Plus } from 'lucide-react';
+import { FileText, FileSpreadsheet, Paperclip, Hash, Send, Clock, MoreHorizontal, File, Wand2, Archive, Edit2, Check, X, ArrowRight, Calendar, Plus, GripVertical } from 'lucide-react';
 import { suggestTags } from '../services/geminiService';
 import { useTranslation } from '../contexts/LanguageContext';
+import { useDraggable } from '@dnd-kit/core';
+import { CSS } from '@dnd-kit/utilities';
 
 interface MessageStreamProps {
   messages: Message[];
@@ -43,13 +45,13 @@ const AttachmentCard: React.FC<{ att: Attachment }> = ({ att }) => {
   );
 };
 
-const MessageCard: React.FC<{ 
-  message: Message; 
+const MessageCard: React.FC<{
+  message: Message;
   tasks: TaskNode[];
   isOrganizing: boolean;
   isLastInGroup: boolean;
   isHighlighted: boolean;
-  onSelect: (m: Message) => void; 
+  onSelect: (m: Message) => void;
   onUpdate: (id: string, content: string) => void;
   onArchive: (id: string) => void;
 }> = ({ message, tasks, isOrganizing, isLastInGroup, isHighlighted, onSelect, onUpdate, onArchive }) => {
@@ -57,6 +59,30 @@ const MessageCard: React.FC<{
   const [editContent, setEditContent] = useState(message.content);
   const cardRef = useRef<HTMLDivElement>(null);
   const { t } = useTranslation();
+
+  // DnD setup for draggable messages
+  const {
+    attributes,
+    listeners,
+    setNodeRef: setDraggableRef,
+    transform,
+    isDragging,
+  } = useDraggable({
+    id: message.id,
+    disabled: isEditing, // Disable dragging when editing
+  });
+
+  const style = {
+    transform: CSS.Translate.toString(transform),
+    opacity: isDragging ? 0.5 : 1,
+    cursor: isDragging ? 'grabbing' : 'default',
+  };
+
+  // Combine refs
+  const setNodeRef = (element: HTMLDivElement | null) => {
+    cardRef.current = element;
+    setDraggableRef(element);
+  };
 
   useEffect(() => {
     if (isHighlighted && cardRef.current) {
@@ -77,14 +103,14 @@ const MessageCard: React.FC<{
   };
 
   return (
-    <div ref={cardRef} className="relative pl-8 group">
+    <div ref={setNodeRef} style={style} className="relative pl-8 group">
       {/* Stratigraphic Line */}
       <div className={`absolute left-[11px] top-0 bottom-0 w-px bg-stone-200 dark:bg-basalt-700 ${isLastInGroup ? 'bg-gradient-to-b from-stone-200 to-transparent dark:from-basalt-700' : ''}`}></div>
-      
+
       {/* Node Marker */}
       <div className={`absolute left-[3px] top-4 w-[17px] h-[17px] rounded-full border-2 z-10 flex items-center justify-center transition-colors duration-500
-        ${message.author === 'user' 
-          ? 'bg-stone-50 dark:bg-basalt-900 border-stone-300 dark:border-basalt-600' 
+        ${message.author === 'user'
+          ? 'bg-stone-50 dark:bg-basalt-900 border-stone-300 dark:border-basalt-600'
           : 'bg-teal-50 dark:bg-teal-900/20 border-teal-200 dark:border-teal-800'}
         ${isHighlighted ? 'ring-2 ring-terracotta-500 ring-offset-2 dark:ring-offset-basalt-900 border-terracotta-500' : ''}
       `}>
@@ -92,18 +118,18 @@ const MessageCard: React.FC<{
       </div>
 
       {/* Card Body - Designed to look like a sediment layer */}
-      <div 
+      <div
         onClick={() => !isEditing && onSelect(message)}
         className={`
            relative mb-3 transition-all duration-300
-           bg-white dark:bg-basalt-800 
-           border rounded-lg 
-           ${isOrganizing && message.suggestedProjectId 
-             ? 'border-teal-500 dark:border-teal-400 ring-1 ring-teal-500/20' 
+           bg-white dark:bg-basalt-800
+           border rounded-lg
+           ${isOrganizing && message.suggestedProjectId
+             ? 'border-teal-500 dark:border-teal-400 ring-1 ring-teal-500/20'
              : isHighlighted
                 ? 'border-terracotta-500 shadow-[0_0_15px_-3px_rgba(225,112,85,0.3)] dark:shadow-[0_0_15px_-3px_rgba(225,112,85,0.2)]'
                 : 'border-stone-200 dark:border-basalt-700 hover:border-stone-300 dark:hover:border-basalt-600'}
-           ${!isEditing ? 'hover:shadow-md hover:-translate-y-[1px]' : ''}
+           ${!isEditing && !isDragging ? 'hover:shadow-md hover:-translate-y-[1px]' : ''}
         `}
       >
         <div className="p-4">
@@ -120,6 +146,14 @@ const MessageCard: React.FC<{
             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
               {!isEditing && (
                 <>
+                  <div
+                    {...attributes}
+                    {...listeners}
+                    className="p-1.5 hover:bg-stone-100 dark:hover:bg-basalt-700 rounded text-stone-400 hover:text-stone-700 dark:hover:text-stone-300 cursor-grab active:cursor-grabbing transition-colors"
+                    title="Drag to create task"
+                  >
+                    <GripVertical size={12} />
+                  </div>
                   <button onClick={(e) => { e.stopPropagation(); setIsEditing(true); }} className="p-1.5 hover:bg-stone-100 dark:hover:bg-basalt-700 rounded text-stone-400 hover:text-stone-700 dark:hover:text-stone-300 transition-colors">
                     <Edit2 size={12} />
                   </button>

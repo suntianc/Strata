@@ -37,6 +37,31 @@ export interface ChatMessage {
   content: string;
   citations?: string[]; // IDs of messages cited
   isThinking?: boolean;
+  position?: number;
+  createdAt?: string;
+}
+
+// 🔥 New: Context for Copilot
+export type ContextType = 'message' | 'task' | 'project';
+
+export interface CopilotContext {
+  type: ContextType;
+  id: string;
+  title?: string; // For tasks/projects
+  content?: string; // For messages
+  data: Message | TaskNode; // Raw data
+}
+
+// 🔥 New: Chat Session
+export interface ChatSession {
+  id: string;
+  contextType: ContextType;
+  contextId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  lastActivity: string;
+  messageCount?: number;
 }
 
 export interface ModelConfig {

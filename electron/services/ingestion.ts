@@ -140,6 +140,9 @@ export class IngestionService {
 
     const suggestions: InboxSuggestion[] = [];
 
+    // Get embeddings instance
+    const embeddings = getEmbeddings();
+
     for (const msg of inboxMessages) {
       // Get message vector
       const msgEmbedding = await embeddings.embedQuery(msg.content);

@@ -3,7 +3,8 @@
  * Exposes safe APIs to the renderer process through contextBridge
  */
 
-import { contextBridge, ipcRenderer } from 'electron';
+import electron from 'electron';
+const { contextBridge, ipcRenderer } = electron;
 import type { IStrataAPI } from './types/ipc';
 
 // Create the API object

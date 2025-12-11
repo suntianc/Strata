@@ -5,7 +5,8 @@
 
 import { connect, Connection, Table } from '@lancedb/lancedb';
 import path from 'path';
-import { app } from 'electron';
+import electron from 'electron';
+const { app } = electron;
 import type { VectorRecord } from '../types/ipc';
 
 let connection: Connection | null = null;

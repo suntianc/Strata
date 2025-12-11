@@ -1,0 +1,4 @@
+{
+  "type": "commonjs",
+  "description": "This package.json marks the electron directory as CommonJS for proper Electron compatibility"
+}

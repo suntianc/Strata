@@ -4,20 +4,21 @@
  */
 
 import { config } from 'dotenv';
-import { app, BrowserWindow, ipcMain } from 'electron';
+import electron, { type BrowserWindow as BrowserWindowType } from 'electron';
+const { app, BrowserWindow, ipcMain } = electron;
 import path from 'path';
-import { fileURLToPath } from 'url';
 
 // Load environment variables from .env file
 config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// __filename and __dirname are automatically available in CommonJS
 
 // Database singletons (will be initialized)
-let mainWindow: BrowserWindow | null = null;
+let mainWindow: BrowserWindowType | null = null;
 
-const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+function isDev() {
+  return process.env.NODE_ENV === 'development' || !app.isPackaged;
+}
 
 async function createWindow() {
   mainWindow = new BrowserWindow({
@@ -28,7 +29,7 @@ async function createWindow() {
     backgroundColor: '#1c1917', // Basalt-900
     titleBarStyle: 'hiddenInset',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false, // Required for database access
@@ -36,7 +37,7 @@ async function createWindow() {
   });
 
   // Load the app
-  if (isDev) {
+  if (isDev()) {
     await mainWindow.loadURL('http://localhost:3000');
     mainWindow.webContents.openDevTools();
   } else {
@@ -109,6 +110,7 @@ async function registerIPCHandlers() {
   const { TaskService } = await import('./services/taskService.js');
   const { IngestionService } = await import('./services/ingestion.js');
   const { RetrievalService } = await import('./services/retrieval.js');
+  const { sessionManager } = await import('./services/sessionManager.js');
 
   // --- Message Handlers ---
   ipcMain.handle('createMessage', async (_, payload) => {
@@ -230,6 +232,115 @@ async function registerIPCHandlers() {
   // --- System Handlers ---
   ipcMain.handle('getAppPath', async () => {
     return app.getPath('userData');
+  });
+
+  // --- Session Management Handlers ---
+  ipcMain.handle('session:getOrCreate', async (_, contextType, contextId, title) => {
+    try {
+      return await sessionManager.getOrCreateSession(contextType, contextId, title);
+    } catch (error) {
+      console.error('[IPC] session:getOrCreate error:', error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('session:create', async (_, contextType, contextId, title) => {
+    try {
+      return await sessionManager.createSession(contextType, contextId, title);
+    } catch (error) {
+      console.error('[IPC] session:create error:', error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('session:list', async (_, contextType, contextId) => {
+    try {
+      return await sessionManager.listSessions(contextType, contextId);
+    } catch (error) {
+      console.error('[IPC] session:list error:', error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('session:get', async (_, sessionId) => {
+    try {
+      return await sessionManager.getSession(sessionId);
+    } catch (error) {
+      console.error('[IPC] session:get error:', error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('session:updateTitle', async (_, sessionId, title) => {
+    try {
+      await sessionManager.updateSessionTitle(sessionId, title);
+    } catch (error) {
+      console.error('[IPC] session:updateTitle error:', error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('session:delete', async (_, sessionId) => {
+    try {
+      await sessionManager.deleteSession(sessionId);
+    } catch (error) {
+      console.error('[IPC] session:delete error:', error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('session:getMessages', async (_, sessionId) => {
+    try {
+      return await sessionManager.getSessionMessages(sessionId);
+    } catch (error) {
+      console.error('[IPC] session:getMessages error:', error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('session:addMessage', async (_, sessionId, role, content, citations) => {
+    try {
+      return await sessionManager.addMessage(sessionId, role, content, citations);
+    } catch (error) {
+      console.error('[IPC] session:addMessage error:', error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('session:clearMessages', async (_, sessionId) => {
+    try {
+      await sessionManager.clearSessionMessages(sessionId);
+    } catch (error) {
+      console.error('[IPC] session:clearMessages error:', error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('session:getRecent', async (_, limit) => {
+    try {
+      return await sessionManager.getRecentSessions(limit);
+    } catch (error) {
+      console.error('[IPC] session:getRecent error:', error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('session:search', async (_, searchTerm, contextType, contextId) => {
+    try {
+      return await sessionManager.searchMessages(searchTerm, contextType, contextId);
+    } catch (error) {
+      console.error('[IPC] session:search error:', error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('session:getStats', async (_, sessionId) => {
+    try {
+      return await sessionManager.getSessionStats(sessionId);
+    } catch (error) {
+      console.error('[IPC] session:getStats error:', error);
+      throw error;
+    }
   });
 
   console.log('[Main] IPC handlers registered successfully');

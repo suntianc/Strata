@@ -1,21 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Layers, Inbox, ChevronRight, ChevronDown, Settings, Search, Circle, Disc, AlertCircle, CheckCircle2, Moon, Sun, LayoutGrid, Globe, Plus, X, Trash2, Edit3, Archive, GripVertical } from 'lucide-react';
-import { TaskNode } from '../types';
+import { Layers, Inbox, ChevronRight, ChevronDown, Settings, Search, Circle, Disc, AlertCircle, CheckCircle2, Moon, Sun, LayoutGrid, Globe, Plus, X, Trash2, Edit3, Archive, GripVertical, Paperclip, FileText } from 'lucide-react';
+import { TaskNode, Message, Attachment } from '../types';
 import { useTranslation } from '../contexts/LanguageContext';
 import { useSettings } from '../contexts/SettingsContext';
 import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  DragEndEvent,
+  useDroppable,
 } from '@dnd-kit/core';
 import {
-  arrayMove,
   SortableContext,
-  sortableKeyboardCoordinates,
   useSortable,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
@@ -24,14 +16,15 @@ import { CSS } from '@dnd-kit/utilities';
 interface SidebarProps {
   tasks: TaskNode[];
   inboxCount: number;
-  onSelectProject: (id: string | null) => void;
+  onSelectProject: (id: string | null, task?: TaskNode | null) => void; // 🔥 Updated: pass task data
   activeProjectId: string | null;
   isDarkMode: boolean;
   toggleTheme: () => void;
   onSearch: (query: string) => void;
   onOpenSettings: () => void;
-  onAddProject: (title: string) => void;
-  onAddTask: (parentId: string, title: string) => void;
+  onAddProject: (title: string, description?: string, attachments?: Attachment[]) => void;
+  onAddTask: (parentId: string, title: string, description?: string, attachments?: Attachment[]) => void;
+  onAddMessage: (message: Message) => void;
   onDeleteProject: (id: string) => void;
   onUpdateProject: (id: string, updates: Partial<TaskNode>) => void;
   onReorderTasks: (reorderedTasks: TaskNode[]) => void;
@@ -41,22 +34,56 @@ const TreeNode: React.FC<{
   node: TaskNode;
   level: number;
   activeId: string | null;
-  onSelect: (id: string) => void;
-  onAddTask: (parentId: string, title: string) => void;
+  openContextMenuId: string | null;
+  setOpenContextMenuId: (id: string | null) => void;
+  onSelect: (id: string, task: TaskNode) => void; // 🔥 Updated: pass task data
+  onAddTask: (parentId: string, title: string, description?: string, attachments?: Attachment[]) => void;
   onDeleteProject: (id: string) => void;
   onUpdateProject: (id: string, updates: Partial<TaskNode>) => void;
-}> = ({ node, level, activeId, onSelect, onAddTask, onDeleteProject, onUpdateProject }) => {
+}> = ({ node, level, activeId, openContextMenuId, setOpenContextMenuId, onSelect, onAddTask, onDeleteProject, onUpdateProject }) => {
   const [expanded, setExpanded] = useState(node.expanded ?? true);
   const [isAddingTask, setIsAddingTask] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [newTaskDescription, setNewTaskDescription] = useState(''); // 🔥 New
+  const [newTaskAttachments, setNewTaskAttachments] = useState<Attachment[]>([]); // 🔥 New
+  const [showExpandedForm, setShowExpandedForm] = useState(false); // 🔥 New
   const [isHovered, setIsHovered] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [showContextMenu, setShowContextMenu] = useState(false);
   const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 });
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(node.title);
+
+  // 🔥 Computed: Is this node's context menu open?
+  const showContextMenu = openContextMenuId === node.id;
   const hasChildren = node.children && node.children.length > 0;
   const isActive = activeId === node.id;
+
+  // DnD setup for sortable (reordering)
+  const {
+    attributes,
+    listeners,
+    setNodeRef: setSortableRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: node.id });
+
+  // DnD setup for droppable (accepting messages)
+  const { setNodeRef: setDroppableRef, isOver } = useDroppable({
+    id: node.id,
+  });
+
+  // Combine refs
+  const setNodeRef = (element: HTMLElement | null) => {
+    setSortableRef(element);
+    setDroppableRef(element);
+  };
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
 
   const getStatusIcon = (status: TaskNode['status']) => {
     switch (status) {
@@ -67,21 +94,70 @@ const TreeNode: React.FC<{
     }
   };
 
+  // 🔥 File upload handler
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+
+    const newAttachments: Attachment[] = Array.from(files).map(file => {
+      const ext = file.name.split('.').pop()?.toLowerCase() || '';
+      let type: Attachment['type'] = 'file';
+
+      if (ext === 'pdf') type = 'pdf';
+      else if (ext === 'xlsx' || ext === 'xls') type = 'excel';
+      else if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) type = 'image';
+      else if (['js', 'ts', 'tsx', 'jsx', 'py', 'java', 'cpp', 'c', 'go', 'rs'].includes(ext)) type = 'code';
+
+      return {
+        id: `att-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        type,
+        name: file.name,
+        url: URL.createObjectURL(file), // Temporary preview URL
+        meta: `${(file.size / 1024).toFixed(1)} KB`
+      };
+    });
+
+    setNewTaskAttachments(prev => [...prev, ...newAttachments]);
+  };
+
+  const handleRemoveAttachment = (attachmentId: string) => {
+    setNewTaskAttachments(prev => prev.filter(att => att.id !== attachmentId));
+  };
+
   const handleAddTask = () => {
-    if (newTaskTitle.trim()) {
-      onAddTask(node.id, newTaskTitle.trim());
-      setNewTaskTitle('');
-      setIsAddingTask(false);
-      setExpanded(true); // Auto-expand when adding task
-    }
+    if (!newTaskTitle.trim()) return;
+
+    // 🔥 Pass description and attachments to onAddTask
+    onAddTask(
+      node.id,
+      newTaskTitle.trim(),
+      newTaskDescription.trim() || undefined,
+      newTaskAttachments.length > 0 ? newTaskAttachments : undefined
+    );
+
+    // Reset all state
+    setNewTaskTitle('');
+    setNewTaskDescription('');
+    setNewTaskAttachments([]);
+    setShowExpandedForm(false);
+    setIsAddingTask(false);
+    setExpanded(true); // Auto-expand when adding task
+  };
+
+  const handleCancelAddTask = () => {
+    setNewTaskTitle('');
+    setNewTaskDescription('');
+    setNewTaskAttachments([]);
+    setShowExpandedForm(false);
+    setIsAddingTask(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
       handleAddTask();
     } else if (e.key === 'Escape') {
-      setIsAddingTask(false);
-      setNewTaskTitle('');
+      handleCancelAddTask();
     }
   };
 
@@ -94,12 +170,12 @@ const TreeNode: React.FC<{
     e.preventDefault();
     e.stopPropagation();
     setContextMenuPos({ x: e.clientX, y: e.clientY });
-    setShowContextMenu(true);
+    setOpenContextMenuId(node.id); // 🔥 Open this menu (closes others)
   };
 
   const handleRename = () => {
     setIsRenaming(true);
-    setShowContextMenu(false);
+    setOpenContextMenuId(null); // 🔥 Close menu
   };
 
   const handleRenameSubmit = () => {
@@ -120,20 +196,20 @@ const TreeNode: React.FC<{
 
   const handleChangeStatus = (status: TaskNode['status']) => {
     onUpdateProject(node.id, { status });
-    setShowContextMenu(false);
+    setOpenContextMenuId(null); // 🔥 Close menu
   };
 
   // Close context menu when clicking outside
   useEffect(() => {
-    const handleClickOutside = () => setShowContextMenu(false);
+    const handleClickOutside = () => setOpenContextMenuId(null);
     if (showContextMenu) {
       document.addEventListener('click', handleClickOutside);
       return () => document.removeEventListener('click', handleClickOutside);
     }
-  }, [showContextMenu]);
+  }, [showContextMenu, setOpenContextMenuId]);
 
   return (
-    <div className="select-none relative">
+    <div ref={setNodeRef} style={style} className="select-none relative" data-task-id={node.id}>
       {/* Context Menu */}
       {showContextMenu && (
         <div
@@ -194,7 +270,7 @@ const TreeNode: React.FC<{
           <div className="border-t border-stone-100 dark:border-basalt-700 my-1" />
           <button
             onClick={() => {
-              setShowContextMenu(false);
+              setOpenContextMenuId(null); // 🔥 Close menu
               setShowDeleteConfirm(true);
             }}
             className="w-full px-3 py-2 text-left text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2 transition-colors"
@@ -210,13 +286,24 @@ const TreeNode: React.FC<{
           ${isActive
             ? 'bg-white dark:bg-basalt-800 border-terracotta-500 text-stone-900 dark:text-stone-100 font-medium shadow-sm'
             : 'border-transparent text-stone-600 dark:text-stone-400 hover:bg-stone-200/50 dark:hover:bg-basalt-800/50 hover:text-stone-900 dark:hover:text-stone-200'}
+          ${isOver ? 'bg-teal-50 dark:bg-teal-900/20 border-teal-500 ring-2 ring-teal-500/20' : ''}
         `}
         style={{ paddingLeft: `${level * 16 + 8}px` }}
-        onClick={() => onSelect(node.id)}
+        onClick={() => onSelect(node.id, node)} // 🔥 Pass node data
         onContextMenu={handleContextMenu}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
       >
+        {/* Drag Handle */}
+        <div
+          {...attributes}
+          {...listeners}
+          className="mr-1 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <GripVertical size={12} className="text-stone-400 hover:text-stone-600 dark:hover:text-stone-300" />
+        </div>
+
         <div
           className={`mr-2 p-0.5 rounded transition-colors ${isActive ? 'text-stone-600 dark:text-stone-300' : 'text-stone-400 hover:text-stone-600 dark:hover:text-stone-300'}`}
           onClick={(e) => {
@@ -260,16 +347,6 @@ const TreeNode: React.FC<{
               title="Add subtask"
             >
               <Plus size={12} />
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowDeleteConfirm(true);
-              }}
-              className="p-1 rounded hover:bg-stone-300 dark:hover:bg-basalt-700 text-stone-500 dark:text-stone-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
-              title="Delete"
-            >
-              <Trash2 size={12} />
             </button>
           </div>
         )}
@@ -318,43 +395,120 @@ const TreeNode: React.FC<{
         </div>
       )}
 
-      {/* Add Task Input */}
+      {/* 🔥 Enhanced Add Task Form */}
       {isAddingTask && (
         <div
-          className="flex items-center py-1.5 px-2 bg-stone-50 dark:bg-basalt-900 border-l-[3px] border-terracotta-300"
-          style={{ paddingLeft: `${(level + 1) * 16 + 8}px` }}
+          className="ml-4 mt-2 mb-2 p-3 bg-stone-100 dark:bg-basalt-800 border border-stone-200 dark:border-basalt-700 rounded-lg"
+          style={{ marginLeft: `${(level + 1) * 16}px` }}
         >
-          <span className="w-[14px] mr-2" />
-          <Circle size={12} className="text-stone-300 dark:text-basalt-600 mr-2" />
-          <input
-            type="text"
-            value={newTaskTitle}
-            onChange={(e) => setNewTaskTitle(e.target.value)}
-            onKeyDown={handleKeyDown}
-            onBlur={() => {
-              if (!newTaskTitle.trim()) {
-                setIsAddingTask(false);
-              }
-            }}
-            placeholder="Enter task name..."
-            autoFocus
-            className="flex-1 bg-transparent text-sm text-stone-800 dark:text-stone-200 placeholder-stone-400 dark:placeholder-stone-600 outline-none"
-          />
-          <button
-            onClick={handleAddTask}
-            className="ml-2 text-teal-600 dark:text-teal-400 hover:text-teal-700 dark:hover:text-teal-300"
-          >
-            <CheckCircle2 size={14} />
-          </button>
-          <button
-            onClick={() => {
-              setIsAddingTask(false);
-              setNewTaskTitle('');
-            }}
-            className="ml-1 text-stone-400 hover:text-stone-600 dark:hover:text-stone-300"
-          >
-            <X size={14} />
-          </button>
+          {/* Title Input */}
+          <div className="mb-3">
+            <label className="block text-xs font-medium text-stone-600 dark:text-stone-400 mb-1">
+              Task Title *
+            </label>
+            <input
+              type="text"
+              placeholder="Enter task name..."
+              value={newTaskTitle}
+              onChange={(e) => setNewTaskTitle(e.target.value)}
+              className="w-full px-3 py-2 bg-white dark:bg-basalt-900 border border-stone-300 dark:border-basalt-600 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+              autoFocus
+              onKeyDown={handleKeyDown}
+            />
+          </div>
+
+          {/* Toggle Expanded Form */}
+          {!showExpandedForm && (
+            <button
+              onClick={() => setShowExpandedForm(true)}
+              className="text-xs text-teal-600 dark:text-teal-400 hover:underline mb-2"
+            >
+              + Add description or attachments
+            </button>
+          )}
+
+          {/* Expanded Form */}
+          {showExpandedForm && (
+            <>
+              {/* Description Input */}
+              <div className="mb-3">
+                <label className="block text-xs font-medium text-stone-600 dark:text-stone-400 mb-1">
+                  Description (optional)
+                </label>
+                <textarea
+                  placeholder="Add details, notes, or context..."
+                  value={newTaskDescription}
+                  onChange={(e) => setNewTaskDescription(e.target.value)}
+                  rows={3}
+                  className="w-full px-3 py-2 bg-white dark:bg-basalt-900 border border-stone-300 dark:border-basalt-600 rounded-md text-sm resize-none focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
+
+              {/* Attachments */}
+              <div className="mb-3">
+                <label className="block text-xs font-medium text-stone-600 dark:text-stone-400 mb-1">
+                  Attachments (optional)
+                </label>
+                <input
+                  type="file"
+                  multiple
+                  id={`file-upload-${node.id}`}
+                  className="hidden"
+                  onChange={handleFileSelect}
+                />
+                <label
+                  htmlFor={`file-upload-${node.id}`}
+                  className="inline-flex items-center gap-2 px-3 py-2 bg-white dark:bg-basalt-900 border border-stone-300 dark:border-basalt-600 rounded-md text-sm cursor-pointer hover:bg-stone-50 dark:hover:bg-basalt-800 transition-colors"
+                >
+                  <Paperclip size={14} />
+                  <span>Upload Files</span>
+                </label>
+
+                {/* Attachment List */}
+                {newTaskAttachments.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {newTaskAttachments.map((attachment) => (
+                      <div
+                        key={attachment.id}
+                        className="flex items-center justify-between px-2 py-1 bg-stone-50 dark:bg-basalt-900 rounded text-xs"
+                      >
+                        <span className="flex items-center gap-2 text-stone-600 dark:text-stone-400">
+                          <FileText size={12} />
+                          {attachment.name}
+                          {attachment.meta && (
+                            <span className="text-stone-400">({attachment.meta})</span>
+                          )}
+                        </span>
+                        <button
+                          onClick={() => handleRemoveAttachment(attachment.id)}
+                          className="text-stone-400 hover:text-terracotta-500"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* Action Buttons */}
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={handleCancelAddTask}
+              className="px-3 py-1.5 text-xs text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-200 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleAddTask}
+              disabled={!newTaskTitle.trim()}
+              className="px-3 py-1.5 text-xs bg-teal-600 text-white rounded-md hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Create Task
+            </button>
+          </div>
         </div>
       )}
       
@@ -371,6 +525,8 @@ const TreeNode: React.FC<{
               node={child}
               level={level + 1}
               activeId={activeId}
+              openContextMenuId={openContextMenuId} // 🔥 Pass down
+              setOpenContextMenuId={setOpenContextMenuId} // 🔥 Pass down
               onSelect={onSelect}
               onAddTask={onAddTask}
               onDeleteProject={onDeleteProject}
@@ -394,13 +550,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenSettings,
   onAddProject,
   onAddTask,
+  onAddMessage, // 🔥 New
   onDeleteProject,
-  onUpdateProject
+  onUpdateProject,
+  onReorderTasks
 }) => {
   const { t, language, setLanguage } = useTranslation();
   const { settings } = useSettings();
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [newProjectTitle, setNewProjectTitle] = useState('');
+  const [newProjectDescription, setNewProjectDescription] = useState(''); // 🔥 New
+  const [newProjectAttachments, setNewProjectAttachments] = useState<Attachment[]>([]); // 🔥 New
+  const [showProjectExpandedForm, setShowProjectExpandedForm] = useState(false); // 🔥 New
+  const [openContextMenuId, setOpenContextMenuId] = useState<string | null>(null); // 🔥 Global context menu state
 
   const toggleLanguage = () => {
     setLanguage(language === 'en' ? 'zh' : 'en');
@@ -408,12 +570,63 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const getInitials = (name: string) => name.slice(0, 2).toUpperCase();
 
+  // 🔥 Project file upload handler
+  const handleProjectFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+
+    const newAttachments: Attachment[] = Array.from(files).map(file => {
+      const ext = file.name.split('.').pop()?.toLowerCase() || '';
+      let type: Attachment['type'] = 'file';
+
+      if (ext === 'pdf') type = 'pdf';
+      else if (ext === 'xlsx' || ext === 'xls') type = 'excel';
+      else if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) type = 'image';
+      else if (['js', 'ts', 'tsx', 'jsx', 'py', 'java', 'cpp', 'c', 'go', 'rs'].includes(ext)) type = 'code';
+
+      return {
+        id: `att-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        type,
+        name: file.name,
+        url: URL.createObjectURL(file),
+        meta: `${(file.size / 1024).toFixed(1)} KB`
+      };
+    });
+
+    setNewProjectAttachments(prev => [...prev, ...newAttachments]);
+  };
+
+  const handleRemoveProjectAttachment = (attachmentId: string) => {
+    setNewProjectAttachments(prev => prev.filter(att => att.id !== attachmentId));
+  };
+
+  // Flatten tasks for DnD (only top-level for now)
+  const taskIds = tasks.map(t => t.id);
+
   const handleAddProject = () => {
-    if (newProjectTitle.trim()) {
-      onAddProject(newProjectTitle.trim());
-      setNewProjectTitle('');
-      setIsAddingProject(false);
-    }
+    if (!newProjectTitle.trim()) return;
+
+    // 🔥 Pass description and attachments to onAddProject
+    onAddProject(
+      newProjectTitle.trim(),
+      newProjectDescription.trim() || undefined,
+      newProjectAttachments.length > 0 ? newProjectAttachments : undefined
+    );
+
+    // Reset all state
+    setNewProjectTitle('');
+    setNewProjectDescription('');
+    setNewProjectAttachments([]);
+    setShowProjectExpandedForm(false);
+    setIsAddingProject(false);
+  };
+
+  const handleCancelAddProject = () => {
+    setNewProjectTitle('');
+    setNewProjectDescription('');
+    setNewProjectAttachments([]);
+    setShowProjectExpandedForm(false);
+    setIsAddingProject(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -490,56 +703,139 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
           </div>
 
-          {/* Add Project Input */}
+          {/* 🔥 Enhanced Add Project Form */}
           {isAddingProject && (
             <div className="px-2 mb-2">
-              <div className="flex items-center py-1.5 px-2 bg-stone-50 dark:bg-basalt-900 border-l-[3px] border-terracotta-300 rounded">
-                <Circle size={12} className="text-stone-300 dark:text-basalt-600 mr-2" />
-                <input
-                  type="text"
-                  value={newProjectTitle}
-                  onChange={(e) => setNewProjectTitle(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  onBlur={() => {
-                    if (!newProjectTitle.trim()) {
-                      setIsAddingProject(false);
-                    }
-                  }}
-                  placeholder="Enter project name..."
-                  autoFocus
-                  className="flex-1 bg-transparent text-sm text-stone-800 dark:text-stone-200 placeholder-stone-400 dark:placeholder-stone-600 outline-none"
-                />
-                <button
-                  onClick={handleAddProject}
-                  className="ml-2 text-teal-600 dark:text-teal-400 hover:text-teal-700 dark:hover:text-teal-300"
-                >
-                  <CheckCircle2 size={14} />
-                </button>
-                <button
-                  onClick={() => {
-                    setIsAddingProject(false);
-                    setNewProjectTitle('');
-                  }}
-                  className="ml-1 text-stone-400 hover:text-stone-600 dark:hover:text-stone-300"
-                >
-                  <X size={14} />
-                </button>
+              <div className="p-3 bg-stone-100 dark:bg-basalt-800 border border-stone-200 dark:border-basalt-700 rounded-lg">
+                {/* Title Input */}
+                <div className="mb-3">
+                  <label className="block text-xs font-medium text-stone-600 dark:text-stone-400 mb-1">
+                    Project Title *
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Enter project name..."
+                    value={newProjectTitle}
+                    onChange={(e) => setNewProjectTitle(e.target.value)}
+                    className="w-full px-3 py-2 bg-white dark:bg-basalt-900 border border-stone-300 dark:border-basalt-600 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                    autoFocus
+                    onKeyDown={handleKeyDown}
+                  />
+                </div>
+
+                {/* Toggle Expanded Form */}
+                {!showProjectExpandedForm && (
+                  <button
+                    onClick={() => setShowProjectExpandedForm(true)}
+                    className="text-xs text-teal-600 dark:text-teal-400 hover:underline mb-2"
+                  >
+                    + Add description or attachments
+                  </button>
+                )}
+
+                {/* Expanded Form */}
+                {showProjectExpandedForm && (
+                  <>
+                    {/* Description Input */}
+                    <div className="mb-3">
+                      <label className="block text-xs font-medium text-stone-600 dark:text-stone-400 mb-1">
+                        Description (optional)
+                      </label>
+                      <textarea
+                        placeholder="Add project details, goals, or context..."
+                        value={newProjectDescription}
+                        onChange={(e) => setNewProjectDescription(e.target.value)}
+                        rows={3}
+                        className="w-full px-3 py-2 bg-white dark:bg-basalt-900 border border-stone-300 dark:border-basalt-600 rounded-md text-sm resize-none focus:outline-none focus:ring-2 focus:ring-teal-500"
+                      />
+                    </div>
+
+                    {/* Attachments */}
+                    <div className="mb-3">
+                      <label className="block text-xs font-medium text-stone-600 dark:text-stone-400 mb-1">
+                        Attachments (optional)
+                      </label>
+                      <input
+                        type="file"
+                        multiple
+                        id="project-file-upload"
+                        className="hidden"
+                        onChange={handleProjectFileSelect}
+                      />
+                      <label
+                        htmlFor="project-file-upload"
+                        className="inline-flex items-center gap-2 px-3 py-2 bg-white dark:bg-basalt-900 border border-stone-300 dark:border-basalt-600 rounded-md text-sm cursor-pointer hover:bg-stone-50 dark:hover:bg-basalt-800 transition-colors"
+                      >
+                        <Paperclip size={14} />
+                        <span>Upload Files</span>
+                      </label>
+
+                      {/* Attachment List */}
+                      {newProjectAttachments.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                          {newProjectAttachments.map((attachment) => (
+                            <div
+                              key={attachment.id}
+                              className="flex items-center justify-between px-2 py-1 bg-stone-50 dark:bg-basalt-900 rounded text-xs"
+                            >
+                              <span className="flex items-center gap-2 text-stone-600 dark:text-stone-400">
+                                <FileText size={12} />
+                                {attachment.name}
+                                {attachment.meta && (
+                                  <span className="text-stone-400">({attachment.meta})</span>
+                                )}
+                              </span>
+                              <button
+                                onClick={() => handleRemoveProjectAttachment(attachment.id)}
+                                className="text-stone-400 hover:text-terracotta-500"
+                              >
+                                <X size={12} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+
+                {/* Action Buttons */}
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={handleCancelAddProject}
+                    className="px-3 py-1.5 text-xs text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-200 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleAddProject}
+                    disabled={!newProjectTitle.trim()}
+                    className="px-3 py-1.5 text-xs bg-teal-600 text-white rounded-md hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Create Project
+                  </button>
+                </div>
               </div>
             </div>
           )}
 
-          {tasks.map(task => (
-            <TreeNode
-              key={task.id}
-              node={task}
-              level={0}
-              activeId={activeProjectId}
-              onSelect={onSelectProject}
-              onAddTask={onAddTask}
-              onDeleteProject={onDeleteProject}
-              onUpdateProject={onUpdateProject}
-            />
-          ))}
+          {/* Tasks List with Sortable Context (no nested DndContext) */}
+          <SortableContext items={taskIds} strategy={verticalListSortingStrategy}>
+            {tasks.map(task => (
+              <TreeNode
+                key={task.id}
+                node={task}
+                level={0}
+                activeId={activeProjectId}
+                openContextMenuId={openContextMenuId} // 🔥 Pass global state
+                setOpenContextMenuId={setOpenContextMenuId} // 🔥 Pass setter
+                onSelect={onSelectProject}
+                onAddTask={onAddTask}
+                onDeleteProject={onDeleteProject}
+                onUpdateProject={onUpdateProject}
+              />
+            ))}
+          </SortableContext>
         </div>
       </div>
 

@@ -211,6 +211,36 @@ export class LLMService {
   }
 }
 
+// Generate short task title from message content
+export const generateTaskTitle = async (
+  messageContent: string,
+  config?: ModelConfig
+): Promise<string> => {
+  // Fallback to environment variable if no config provided
+  const llmConfig: ModelConfig = config || {
+    provider: 'gemini',
+    modelName: 'gemini-2.5-flash',
+    apiKey: process.env.API_KEY || '',
+  };
+
+  const prompt = `Generate a short, concise task title (maximum 30 characters) from this message content.
+Return ONLY the title, no explanations, no quotes.
+
+Message: "${messageContent.substring(0, 500)}"`;
+
+  try {
+    const service = new LLMService(llmConfig);
+    const messages = [{ role: 'user' as const, content: prompt }];
+    const title = await service.generateChatCompletion(messages, { temperature: 0.5, maxTokens: 50 });
+    // Clean up response - remove quotes and trim
+    return title.replace(/["']/g, '').trim().substring(0, 60);
+  } catch (error: any) {
+    console.error("Title Generation Error:", error);
+    // Fallback: use first 30 chars of content
+    return messageContent.substring(0, 30).trim() + (messageContent.length > 30 ? '...' : '');
+  }
+};
+
 // Legacy wrapper for backward compatibility
 export const generateAnalysis = async (
   prompt: string,

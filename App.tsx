@@ -2,11 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { MessageStream } from './components/MessageStream';
 import { RightPanel, RightPanelMode } from './components/RightPanel';
-import { TaskNode, Message, Attachment } from './types';
+import { TaskNode, Message, Attachment, CopilotContext } from './types';
 import { suggestTaskForMessages } from './services/geminiService';
+import { generateTaskTitle } from './services/llmService';
 import { LanguageProvider } from './contexts/LanguageContext';
-import { SettingsProvider } from './contexts/SettingsContext';
+import { SettingsProvider, useSettings } from './contexts/SettingsContext';
 import { SettingsModal } from './components/SettingsModal';
+import { DndContext, DragEndEvent, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { db } from './services/database.v2';
 
 // Demo Data - Keep one example to guide users
 const INITIAL_TASKS: TaskNode[] = [
@@ -36,113 +39,232 @@ const INITIAL_MESSAGES: Message[] = [
 ];
 
 const AppContent: React.FC = () => {
-  // Load data from localStorage or use initial data
-  const [tasks, setTasks] = useState<TaskNode[]>(() => {
-    try {
-      const stored = localStorage.getItem('strata_tasks');
-      return stored ? JSON.parse(stored) : INITIAL_TASKS;
-    } catch {
-      return INITIAL_TASKS;
-    }
-  });
+  const { settings } = useSettings();
 
-  const [messages, setMessages] = useState<Message[]>(() => {
-    try {
-      const stored = localStorage.getItem('strata_messages');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        // Parse date strings back to Date objects
-        return parsed.map((msg: any) => ({
-          ...msg,
-          timestamp: new Date(msg.timestamp)
-        }));
-      }
-      return INITIAL_MESSAGES;
-    } catch {
-      return INITIAL_MESSAGES;
-    }
-  });
+  // DnD Sensors for global drag-and-drop
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    })
+  );
 
-  const [activeProjectId, setActiveProjectId] = useState<string | null>(() => {
-    const stored = localStorage.getItem('strata_activeProject');
-    return stored || (tasks.length > 0 ? tasks[0].id : null);
-  });
+  // State with initial values
+  const [tasks, setTasks] = useState<TaskNode[]>(INITIAL_TASKS);
+  const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [isDarkMode, setIsDarkMode] = useState(false);
+  const [isLoaded, setIsLoaded] = useState(false);
 
-  // Right Panel State
   const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>('collapsed');
   const [selectedContextMessage, setSelectedContextMessage] = useState<Message | null>(null);
+  const [copilotContext, setCopilotContext] = useState<CopilotContext | null>(null);
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
 
-  const [isDarkMode, setIsDarkMode] = useState(() => {
-    const stored = localStorage.getItem('strata_darkMode');
-    return stored === 'true';
-  });
-
-  // Search State
   const [searchQuery, setSearchQuery] = useState('');
-
-  // Inbox Organizing State
   const [isOrganizing, setIsOrganizing] = useState(false);
-
-  // Settings State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
-  // Persist tasks to localStorage
+  // Load data from database on mount
   useEffect(() => {
-    try {
-      localStorage.setItem('strata_tasks', JSON.stringify(tasks));
-    } catch (error) {
-      console.error('[App] Failed to save tasks:', error);
-    }
-  }, [tasks]);
+    const loadData = async () => {
+      try {
+        // Check if running in Electron mode
+        const isElectron = typeof window !== 'undefined' && window.electron !== undefined;
 
-  // Persist messages to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem('strata_messages', JSON.stringify(messages));
-    } catch (error) {
-      console.error('[App] Failed to save messages:', error);
-    }
-  }, [messages]);
+        if (isElectron) {
+          console.log('[App] 🖥️  Running in Electron mode - skipping PGlite initialization');
+          console.log('[App] Using localStorage for tasks/messages (chat sessions managed via IPC)');
 
-  // Persist active project
-  useEffect(() => {
-    try {
-      if (activeProjectId) {
-        localStorage.setItem('strata_activeProject', activeProjectId);
-      } else {
-        localStorage.removeItem('strata_activeProject');
+          // In Electron mode, load from localStorage
+          const storedTasks = localStorage.getItem('strata_tasks');
+          const storedMessages = localStorage.getItem('strata_messages');
+          const storedActiveProject = localStorage.getItem('strata_activeProject');
+          const storedDarkMode = localStorage.getItem('strata_darkMode');
+
+          if (storedTasks) {
+            const tasks = JSON.parse(storedTasks) as TaskNode[];
+            console.log(`[App] Loaded ${tasks.length} tasks from localStorage`);
+            setTasks(tasks);
+            if (!storedActiveProject && tasks.length > 0) {
+              setActiveProjectId(tasks[0].id);
+            }
+          }
+
+          if (storedMessages) {
+            const messages = JSON.parse(storedMessages).map((msg: any) => ({
+              ...msg,
+              timestamp: new Date(msg.timestamp)
+            })) as Message[];
+            console.log(`[App] Loaded ${messages.length} messages from localStorage`);
+            setMessages(messages);
+          }
+
+          if (storedActiveProject) {
+            setActiveProjectId(storedActiveProject);
+          }
+
+          if (storedDarkMode === 'true') {
+            setIsDarkMode(true);
+          }
+
+          setIsLoaded(true);
+          console.log('[App] ✅ Electron mode data loaded successfully');
+          return;
+        }
+
+        // Browser mode: use PGlite
+        console.log('[App] 🌐 Running in Browser mode - initializing PGlite...');
+        await db.init();
+
+        console.log('[App] Running migration from localStorage...');
+        await db.migrateFromLocalStorage();
+
+        console.log('[App] Loading data from database...');
+        const dbTasks = await db.getTasks();
+        const dbMessages = await db.getMessages();
+        const dbActiveProject = await db.getAppState('activeProject');
+        const dbDarkMode = await db.getAppState('darkMode');
+
+        if (dbTasks.length > 0) {
+          console.log(`[App] Loaded ${dbTasks.length} tasks from database`);
+          setTasks(dbTasks);
+        }
+
+        if (dbMessages.length > 0) {
+          console.log(`[App] Loaded ${dbMessages.length} messages from database`);
+          setMessages(dbMessages);
+        }
+
+        if (dbActiveProject) {
+          setActiveProjectId(dbActiveProject);
+        } else if (dbTasks.length > 0) {
+          setActiveProjectId(dbTasks[0].id);
+        }
+
+        if (dbDarkMode) {
+          setIsDarkMode(dbDarkMode === 'true');
+        }
+
+        setIsLoaded(true);
+        console.log('[App] ✅ Browser mode data loaded successfully');
+      } catch (error) {
+        console.error('[App] ❌ Failed to load data:', error);
+        setIsLoaded(true); // Still mark as loaded to show UI
       }
-    } catch (error) {
-      console.error('[App] Failed to save active project:', error);
-    }
-  }, [activeProjectId]);
+    };
+    loadData();
+  }, []);
 
-  // Persist dark mode
+  // Save tasks to database (only after initial load)
   useEffect(() => {
-    try {
-      localStorage.setItem('strata_darkMode', isDarkMode.toString());
-    } catch (error) {
-      console.error('[App] Failed to save dark mode:', error);
-    }
-  }, [isDarkMode]);
+    if (!isLoaded) return;
 
-  // Derived state for filtering
+    const saveTasks = async () => {
+      try {
+        const isElectron = typeof window !== 'undefined' && window.electron !== undefined;
+
+        if (isElectron) {
+          // Electron mode: save to localStorage
+          localStorage.setItem('strata_tasks', JSON.stringify(tasks));
+          console.log('[App] ✅ Tasks saved to localStorage');
+        } else {
+          // Browser mode: save to PGlite
+          await db.saveTasks(tasks);
+          console.log('[App] ✅ Tasks saved to database');
+        }
+      } catch (error) {
+        console.error('[App] ❌ Failed to save tasks:', error);
+      }
+    };
+    saveTasks();
+  }, [tasks, isLoaded]);
+
+  // Save messages to database (only after initial load)
+  useEffect(() => {
+    if (!isLoaded) return;
+
+    const saveMessages = async () => {
+      try {
+        const isElectron = typeof window !== 'undefined' && window.electron !== undefined;
+
+        if (isElectron) {
+          // Electron mode: save to localStorage
+          localStorage.setItem('strata_messages', JSON.stringify(messages));
+          console.log('[App] ✅ Messages saved to localStorage');
+        } else {
+          // Browser mode: save to PGlite
+          await db.saveMessages(messages);
+          console.log('[App] ✅ Messages saved to database');
+        }
+      } catch (error) {
+        console.error('[App] ❌ Failed to save messages:', error);
+      }
+    };
+    saveMessages();
+  }, [messages, isLoaded]);
+
+  // Save active project to database (only after initial load)
+  useEffect(() => {
+    if (!isLoaded) return;
+
+    const saveActiveProject = async () => {
+      try {
+        const isElectron = typeof window !== 'undefined' && window.electron !== undefined;
+
+        if (isElectron) {
+          // Electron mode: save to localStorage
+          if (activeProjectId) {
+            localStorage.setItem('strata_activeProject', activeProjectId);
+          }
+        } else {
+          // Browser mode: save to PGlite
+          if (activeProjectId) {
+            await db.setAppState('activeProject', activeProjectId);
+          }
+        }
+      } catch (error) {
+        console.error('[App] ❌ Failed to save active project:', error);
+      }
+    };
+    saveActiveProject();
+  }, [activeProjectId, isLoaded]);
+
+  // Save dark mode to database (only after initial load)
+  useEffect(() => {
+    if (!isLoaded) return;
+
+    const saveDarkMode = async () => {
+      try {
+        const isElectron = typeof window !== 'undefined' && window.electron !== undefined;
+
+        if (isElectron) {
+          // Electron mode: save to localStorage
+          localStorage.setItem('strata_darkMode', isDarkMode.toString());
+        } else {
+          // Browser mode: save to PGlite
+          await db.setAppState('darkMode', isDarkMode.toString());
+        }
+      } catch (error) {
+        console.error('[App] ❌ Failed to save dark mode:', error);
+      }
+    };
+    saveDarkMode();
+  }, [isDarkMode, isLoaded]);
+
+  // ... (rest of the component code - same as App.tsx but without database calls)
+  // For brevity, I'll include just the key handlers
+
   const displayedMessages = messages.filter(m => {
-    // 1. Archive filter
     if (m.isArchived) return false;
-
-    // 2. Search filter
     if (searchQuery) {
-      return m.content.toLowerCase().includes(searchQuery.toLowerCase()) || 
+      return m.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
              m.tags.some(t => t.toLowerCase().includes(searchQuery.toLowerCase()));
     }
-
-    // 3. Project filter
     if (activeProjectId) {
-      return m.projectId === activeProjectId || (activeProjectId === 'p1' && m.projectId?.startsWith('p')); 
+      return m.projectId === activeProjectId || (activeProjectId === 'p1' && m.projectId?.startsWith('p'));
     } else {
-      // Inbox View
       return !m.projectId;
     }
   });
@@ -166,31 +288,25 @@ const AppContent: React.FC = () => {
   const handleUpdateMessage = (id: string, newContent: string) => {
     setMessages(prev => prev.map(msg => {
       if (msg.id === id && msg.content !== newContent) {
-        return {
-          ...msg,
-          content: newContent,
-          version: msg.version + 1
-        };
+        return { ...msg, content: newContent, version: msg.version + 1 };
       }
       return msg;
     }));
   };
 
   const handleArchiveMessage = (id: string) => {
-    setMessages(prev => prev.map(msg => 
+    setMessages(prev => prev.map(msg =>
       msg.id === id ? { ...msg, isArchived: true } : msg
     ));
   };
 
   const handleOrganizeInbox = async () => {
     setIsOrganizing(true);
-    // Simulate AI Latency
     setTimeout(async () => {
       const inboxMessages = messages.filter(m => !m.projectId && !m.isArchived);
       const ids = inboxMessages.map(m => m.content);
-      // Simulate AI suggestions
       const suggestions = await suggestTaskForMessages(ids, tasks);
-      
+
       setMessages(prev => prev.map((msg, idx) => {
          const inboxIdx = inboxMessages.findIndex(im => im.id === msg.id);
          if (inboxIdx !== -1 && suggestions[inboxIdx.toString()]) {
@@ -204,11 +320,7 @@ const AppContent: React.FC = () => {
   const handleApplyOrganization = () => {
     setMessages(prev => prev.map(msg => {
       if (msg.suggestedProjectId) {
-        return { 
-          ...msg, 
-          projectId: msg.suggestedProjectId, 
-          suggestedProjectId: undefined 
-        };
+        return { ...msg, projectId: msg.suggestedProjectId, suggestedProjectId: undefined };
       }
       return msg;
     }));
@@ -217,29 +329,49 @@ const AppContent: React.FC = () => {
 
   const handleSelectMessage = (message: Message) => {
     setSelectedContextMessage(message);
-    setRightPanelMode('info'); // Open Info Mode on select
+    setCopilotContext({
+      type: 'message',
+      id: message.id,
+      content: message.content,
+      data: message
+    });
+    setRightPanelMode('info');
   };
 
   const handleCitationClick = (id: string) => {
     setHighlightedMessageId(id);
-    // Clear highlight after animation usually, but keeping it selected is fine for now
-    // Or we could auto-clear after 2 seconds
     setTimeout(() => setHighlightedMessageId(null), 2000);
   };
 
   const toggleTheme = () => setIsDarkMode(!isDarkMode);
 
-  const handleAddProject = (title: string) => {
+  const handleAddProject = (title: string, description?: string, attachments?: Attachment[]) => {
     const newProject: TaskNode = {
       id: `project-${Date.now()}`,
       title,
       status: 'active',
       children: []
     };
+
+    if ((description && description.trim()) || (attachments && attachments.length > 0)) {
+      const firstMessage: Message = {
+        id: `msg-${Date.now()}`,
+        content: description?.trim() || '(Project created with attachments)',
+        timestamp: new Date(),
+        version: 1,
+        author: 'user',
+        tags: [],
+        attachments: attachments || [],
+        projectId: newProject.id,
+        relatedIds: []
+      };
+      setMessages(prev => [firstMessage, ...prev]);
+    }
+
     setTasks(prev => [...prev, newProject]);
   };
 
-  const handleAddTask = (parentId: string, title: string) => {
+  const handleAddTask = (parentId: string, title: string, description?: string, attachments?: Attachment[]) => {
     const newTask: TaskNode = {
       id: `task-${Date.now()}`,
       title,
@@ -247,18 +379,27 @@ const AppContent: React.FC = () => {
       children: []
     };
 
+    if ((description && description.trim()) || (attachments && attachments.length > 0)) {
+      const firstMessage: Message = {
+        id: `msg-${Date.now()}`,
+        content: description?.trim() || '(Task created with attachments)',
+        timestamp: new Date(),
+        version: 1,
+        author: 'user',
+        tags: [],
+        attachments: attachments || [],
+        projectId: newTask.id,
+        relatedIds: []
+      };
+      setMessages(prev => [firstMessage, ...prev]);
+    }
+
     const addTaskToNode = (node: TaskNode): TaskNode => {
       if (node.id === parentId) {
-        return {
-          ...node,
-          children: [...(node.children || []), newTask]
-        };
+        return { ...node, children: [...(node.children || []), newTask] };
       }
       if (node.children) {
-        return {
-          ...node,
-          children: node.children.map(addTaskToNode)
-        };
+        return { ...node, children: node.children.map(addTaskToNode) };
       }
       return node;
     };
@@ -268,21 +409,14 @@ const AppContent: React.FC = () => {
 
   const handleDeleteProject = (id: string) => {
     const deleteFromNode = (node: TaskNode): TaskNode | null => {
-      if (node.id === id) {
-        return null; // Mark for deletion
-      }
+      if (node.id === id) return null;
       if (node.children) {
-        return {
-          ...node,
-          children: node.children.map(deleteFromNode).filter(n => n !== null) as TaskNode[]
-        };
+        return { ...node, children: node.children.map(deleteFromNode).filter(n => n !== null) as TaskNode[] };
       }
       return node;
     };
 
     setTasks(prev => prev.map(deleteFromNode).filter(n => n !== null) as TaskNode[]);
-
-    // Clear selection if deleted project was active
     if (activeProjectId === id) {
       setActiveProjectId(null);
     }
@@ -294,10 +428,7 @@ const AppContent: React.FC = () => {
         return { ...node, ...updates };
       }
       if (node.children) {
-        return {
-          ...node,
-          children: node.children.map(updateNode)
-        };
+        return { ...node, children: node.children.map(updateNode) };
       }
       return node;
     };
@@ -305,56 +436,165 @@ const AppContent: React.FC = () => {
     setTasks(prev => prev.map(updateNode));
   };
 
+  const handleReorderTasks = (reorderedTasks: TaskNode[]) => {
+    setTasks(reorderedTasks);
+  };
+
+  const handleMessageToTask = async (messageId: string, targetTaskId: string) => {
+    const message = messages.find(m => m.id === messageId);
+    if (!message) return;
+
+    let title = message.content.trim();
+
+    if (title.length > 30) {
+      try {
+        title = await generateTaskTitle(title, settings.llm);
+      } catch (error) {
+        console.error('[App] Title generation failed:', error);
+        title = title.substring(0, 30) + '...';
+      }
+    }
+
+    const newTask: TaskNode = {
+      id: `task-${Date.now()}`,
+      title,
+      status: 'pending',
+      children: []
+    };
+
+    if (message.attachments.length > 0 || message.content.length > 30) {
+      const firstMessage: Message = {
+        id: `msg-${Date.now()}`,
+        content: message.content,
+        timestamp: new Date(),
+        version: 1,
+        author: 'user',
+        tags: message.tags,
+        attachments: message.attachments,
+        projectId: newTask.id,
+        relatedIds: []
+      };
+      setMessages(prev => [firstMessage, ...prev]);
+    }
+
+    const addTaskToNode = (node: TaskNode): TaskNode => {
+      if (node.id === targetTaskId) {
+        return { ...node, children: [...(node.children || []), newTask], expanded: true };
+      }
+      if (node.children) {
+        return { ...node, children: node.children.map(addTaskToNode) };
+      }
+      return node;
+    };
+
+    setTasks(prev => prev.map(addTaskToNode));
+
+    setTimeout(() => {
+      const element = document.querySelector(`[data-task-id="${newTask.id}"]`);
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        element.classList.add('highlight-new-task');
+        setTimeout(() => element.classList.remove('highlight-new-task'), 2000);
+      }
+    }, 300);
+
+    handleArchiveMessage(messageId);
+  };
+
+  const handleAddMessage = (message: Message) => {
+    setMessages(prev => [message, ...prev]);
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over) return;
+
+    const activeId = active.id.toString();
+    const overId = over.id.toString();
+
+    if (activeId.startsWith('msg-')) {
+      if (activeId !== overId) {
+        handleMessageToTask(activeId, overId);
+      }
+    } else if (activeId.startsWith('task-') || activeId.startsWith('project-')) {
+      if (activeId !== overId) {
+        const oldIndex = tasks.findIndex((t) => t.id === activeId);
+        const newIndex = tasks.findIndex((t) => t.id === overId);
+
+        if (oldIndex !== -1 && newIndex !== -1) {
+          const reordered = [...tasks];
+          const [moved] = reordered.splice(oldIndex, 1);
+          reordered.splice(newIndex, 0, moved);
+          handleReorderTasks(reordered);
+        }
+      }
+    }
+  };
+
   return (
-    <div className={isDarkMode ? 'dark' : ''}>
-      <div className="flex h-screen w-screen overflow-hidden bg-stone-50 dark:bg-basalt-900 transition-colors duration-300">
-        {/* Sidebar */}
-        <Sidebar
-          tasks={tasks}
-          inboxCount={inboxCount}
-          activeProjectId={activeProjectId}
-          onSelectProject={setActiveProjectId}
-          isDarkMode={isDarkMode}
-          toggleTheme={toggleTheme}
-          onSearch={setSearchQuery}
-          onOpenSettings={() => setIsSettingsOpen(true)}
-          onAddProject={handleAddProject}
-          onAddTask={handleAddTask}
-          onDeleteProject={handleDeleteProject}
-          onUpdateProject={handleUpdateProject}
-        />
-
-        {/* Main Content */}
-        <main className="flex-1 flex flex-col relative min-w-0">
-          <MessageStream 
-            messages={displayedMessages}
-            projectId={activeProjectId}
+    <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+      <div className={isDarkMode ? 'dark' : ''}>
+        <div className="flex h-screen w-screen overflow-hidden bg-stone-50 dark:bg-basalt-900 transition-colors duration-300">
+          <Sidebar
             tasks={tasks}
-            highlightedMessageId={highlightedMessageId}
-            onSendMessage={handleSendMessage}
-            onSelectMessage={handleSelectMessage}
-            onUpdateMessage={handleUpdateMessage}
-            onArchiveMessage={handleArchiveMessage}
-            onOrganizeInbox={handleOrganizeInbox}
-            onApplyOrganization={handleApplyOrganization}
-            isOrganizing={isOrganizing}
-            className="flex-1"
+            inboxCount={inboxCount}
+            activeProjectId={activeProjectId}
+            onSelectProject={(id, task) => {
+              setActiveProjectId(id);
+              if (task) {
+                const isProject = task.id.startsWith('project-') || !task.id.startsWith('task-');
+                setCopilotContext({
+                  type: isProject ? 'project' : 'task',
+                  id: task.id,
+                  title: task.title,
+                  data: task
+                });
+              } else {
+                setCopilotContext(null);
+              }
+            }}
+            isDarkMode={isDarkMode}
+            toggleTheme={toggleTheme}
+            onSearch={setSearchQuery}
+            onOpenSettings={() => setIsSettingsOpen(true)}
+            onAddProject={handleAddProject}
+            onAddTask={handleAddTask}
+            onAddMessage={handleAddMessage}
+            onDeleteProject={handleDeleteProject}
+            onUpdateProject={handleUpdateProject}
+            onReorderTasks={handleReorderTasks}
           />
-        </main>
 
-        {/* Right Panel (AI) */}
-        <RightPanel 
-          mode={rightPanelMode}
-          setMode={setRightPanelMode}
-          contextMessage={selectedContextMessage}
-          onCitationClick={handleCitationClick}
-          messages={messages}
-        />
+          <main className="flex-1 flex flex-col relative min-w-0">
+            <MessageStream
+              messages={displayedMessages}
+              projectId={activeProjectId}
+              tasks={tasks}
+              highlightedMessageId={highlightedMessageId}
+              onSendMessage={handleSendMessage}
+              onSelectMessage={handleSelectMessage}
+              onUpdateMessage={handleUpdateMessage}
+              onArchiveMessage={handleArchiveMessage}
+              onOrganizeInbox={handleOrganizeInbox}
+              onApplyOrganization={handleApplyOrganization}
+              isOrganizing={isOrganizing}
+              className="flex-1"
+            />
+          </main>
+
+          <RightPanel
+            mode={rightPanelMode}
+            setMode={setRightPanelMode}
+            contextMessage={selectedContextMessage}
+            context={copilotContext}
+            onCitationClick={handleCitationClick}
+            messages={messages}
+          />
+        </div>
+
+        <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
       </div>
-
-      {/* Settings Modal */}
-      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
-    </div>
+    </DndContext>
   );
 };
 

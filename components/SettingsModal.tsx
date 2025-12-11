@@ -131,14 +131,33 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
               <div className="space-y-2">
                 <label className="text-xs font-bold text-stone-500 uppercase tracking-wide">{t('avatar_url')}</label>
                 <div className="flex gap-4">
-                  <div className="flex-1">
-                    <input 
-                      type="text" 
+                  <div className="flex-1 flex gap-2">
+                    <input
+                      type="text"
                       value={localProfile.avatarUrl || ''}
                       onChange={(e) => setLocalProfile({...localProfile, avatarUrl: e.target.value})}
                       placeholder="https://..."
-                      className="w-full bg-white dark:bg-basalt-800 border border-stone-200 dark:border-basalt-700 rounded-lg px-4 py-2.5 text-sm focus:ring-1 focus:ring-teal-500 outline-none" 
+                      className="flex-1 bg-white dark:bg-basalt-800 border border-stone-200 dark:border-basalt-700 rounded-lg px-4 py-2.5 text-sm focus:ring-1 focus:ring-teal-500 outline-none"
                     />
+                    <input
+                      type="file"
+                      id="avatar-upload"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const url = URL.createObjectURL(file);
+                          setLocalProfile({...localProfile, avatarUrl: url});
+                        }
+                      }}
+                    />
+                    <label
+                      htmlFor="avatar-upload"
+                      className="px-3 py-2.5 bg-stone-200 dark:bg-basalt-700 hover:bg-stone-300 dark:hover:bg-basalt-600 border border-stone-200 dark:border-basalt-600 rounded-lg text-sm font-medium text-stone-700 dark:text-stone-300 cursor-pointer transition-colors whitespace-nowrap"
+                    >
+                      Upload
+                    </label>
                   </div>
                   <div className="w-10 h-10 rounded-full bg-stone-200 dark:bg-basalt-700 overflow-hidden flex-shrink-0 border border-stone-200 dark:border-basalt-600">
                     {localProfile.avatarUrl ? (

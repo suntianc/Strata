@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import { AppSettings, UserProfile, ModelConfig } from '../types';
+import { db } from '../services/database';
 
 const DEFAULT_SETTINGS: AppSettings = {
   profile: {
@@ -29,34 +30,68 @@ interface SettingsContextType {
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
 
 export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // Load settings from localStorage
-  const [settings, setSettings] = useState<AppSettings>(() => {
-    try {
-      const stored = localStorage.getItem('strata_settings');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        // Merge with defaults to ensure all fields exist
-        return {
-          profile: { ...DEFAULT_SETTINGS.profile, ...parsed.profile },
-          llm: { ...DEFAULT_SETTINGS.llm, ...parsed.llm },
-          embedding: { ...DEFAULT_SETTINGS.embedding, ...parsed.embedding },
-        };
-      }
-    } catch (error) {
-      console.error('[SettingsContext] Failed to load settings:', error);
-    }
-    return DEFAULT_SETTINGS;
-  });
+  // Load settings from PGlite database
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [isLoaded, setIsLoaded] = useState(false);
 
-  // Persist settings to localStorage whenever they change
+  // Initialize database and load settings
   useEffect(() => {
-    try {
-      localStorage.setItem('strata_settings', JSON.stringify(settings));
-      console.log('[SettingsContext] Settings saved:', settings.llm.provider);
-    } catch (error) {
-      console.error('[SettingsContext] Failed to save settings:', error);
-    }
-  }, [settings]);
+    const loadSettings = async () => {
+      try {
+        await db.init();
+
+        // Try to load settings from database
+        const dbSettings = await db.getSettings();
+
+        if (dbSettings) {
+          setSettings(dbSettings);
+          console.log('[SettingsContext] Settings loaded from database');
+        } else {
+          // Try to migrate from localStorage
+          const stored = localStorage.getItem('strata_settings');
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            const migratedSettings = {
+              profile: { ...DEFAULT_SETTINGS.profile, ...parsed.profile },
+              llm: { ...DEFAULT_SETTINGS.llm, ...parsed.llm },
+              embedding: { ...DEFAULT_SETTINGS.embedding, ...parsed.embedding },
+            };
+            await db.saveSettings(migratedSettings);
+            setSettings(migratedSettings);
+            console.log('[SettingsContext] Settings migrated from localStorage');
+          } else {
+            // Save default settings
+            await db.saveSettings(DEFAULT_SETTINGS);
+            console.log('[SettingsContext] Default settings saved');
+          }
+        }
+
+        setIsLoaded(true);
+      } catch (error) {
+        console.error('[SettingsContext] Failed to load settings:', error);
+        setSettings(DEFAULT_SETTINGS);
+        setIsLoaded(true);
+      }
+    };
+
+    loadSettings();
+  }, []);
+
+  // Persist settings to database whenever they change
+  useEffect(() => {
+    if (!isLoaded) return;
+
+    const saveSettings = async () => {
+      try {
+        await db.saveSettings(settings);
+        console.log('[SettingsContext] Settings saved to database');
+      } catch (error) {
+        console.error('[SettingsContext] Failed to save settings:', error);
+      }
+    };
+
+    saveSettings();
+  }, [settings, isLoaded]);
 
   const updateProfile = (profile: Partial<UserProfile>) => {
     setSettings(prev => ({
