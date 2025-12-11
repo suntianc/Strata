@@ -1,9 +1,10 @@
 
 export interface Attachment {
   id: string;
-  type: 'pdf' | 'excel' | 'image' | 'code';
+  type: 'pdf' | 'excel' | 'image' | 'code' | 'file';
   name: string;
   url?: string;
+  data?: string; // base64 encoded file data
   meta?: string; // e.g., "12 pages" or "24KB"
 }
 

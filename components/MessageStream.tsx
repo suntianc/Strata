@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Message, Attachment, TaskNode } from '../types';
-import { FileText, FileSpreadsheet, Paperclip, Hash, Send, Clock, MoreHorizontal, File, Wand2, Archive, Edit2, Check, X, ArrowRight, Calendar } from 'lucide-react';
+import { FileText, FileSpreadsheet, Paperclip, Hash, Send, Clock, MoreHorizontal, File, Wand2, Archive, Edit2, Check, X, ArrowRight, Calendar, Plus } from 'lucide-react';
 import { suggestTags } from '../services/geminiService';
 import { useTranslation } from '../contexts/LanguageContext';
 
@@ -20,13 +20,20 @@ interface MessageStreamProps {
 }
 
 const AttachmentCard: React.FC<{ att: Attachment }> = ({ att }) => {
-  const isPdf = att.type === 'pdf';
-  const isExcel = att.type === 'excel';
-  
+  const getIconColorClass = () => {
+    switch (att.type) {
+      case 'pdf': return 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400';
+      case 'excel': return 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400';
+      case 'image': return 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400';
+      case 'code': return 'bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400';
+      default: return 'bg-stone-200 dark:bg-basalt-700 text-stone-600 dark:text-stone-400';
+    }
+  };
+
   return (
     <div className="flex items-center p-2 bg-stone-100 dark:bg-basalt-900 border border-stone-200 dark:border-basalt-700 rounded text-xs group hover:border-teal-800/30 dark:hover:border-teal-400/30 transition-colors cursor-pointer">
-      <div className={`p-1.5 rounded mr-2 ${isPdf ? 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400' : isExcel ? 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400' : 'bg-stone-200 dark:bg-basalt-700 text-stone-600 dark:text-stone-400'}`}>
-        {isPdf ? <FileText size={14} /> : isExcel ? <FileSpreadsheet size={14} /> : <File size={14} />}
+      <div className={`p-1.5 rounded mr-2 ${getIconColorClass()}`}>
+        {att.type === 'pdf' ? <FileText size={14} /> : att.type === 'excel' ? <FileSpreadsheet size={14} /> : <File size={14} />}
       </div>
       <div className="flex flex-col overflow-hidden">
         <span className="font-medium text-stone-700 dark:text-stone-200 truncate">{att.name}</span>
@@ -200,23 +207,30 @@ const DateLayerHeader: React.FC<{ date: string }> = ({ date }) => (
   </div>
 );
 
-export const MessageStream: React.FC<MessageStreamProps> = ({ 
-  messages, 
-  projectId, 
+export const MessageStream: React.FC<MessageStreamProps> = ({
+  messages,
+  projectId,
   tasks,
   highlightedMessageId,
-  onSendMessage, 
-  onSelectMessage, 
+  onSendMessage,
+  onSelectMessage,
   onUpdateMessage,
   onArchiveMessage,
   onOrganizeInbox,
   onApplyOrganization,
   isOrganizing,
-  className 
+  className
 }) => {
   const [inputText, setInputText] = useState('');
   const [isComposing, setIsComposing] = useState(false);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [isAddingTag, setIsAddingTag] = useState(false);
+  const [newTagInput, setNewTagInput] = useState('');
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const tagInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { t, language } = useTranslation();
 
   // Auto-resize textarea
@@ -227,11 +241,186 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
     }
   }, [inputText]);
 
+  // Focus tag input when adding
+  useEffect(() => {
+    if (isAddingTag && tagInputRef.current) {
+      tagInputRef.current.focus();
+    }
+  }, [isAddingTag]);
+
+  // Get all existing tags from messages for suggestions
+  const existingTags = useMemo(() => {
+    const tagSet = new Set<string>();
+    messages.forEach(msg => {
+      msg.tags.forEach(tag => tagSet.add(tag));
+    });
+    return Array.from(tagSet).sort();
+  }, [messages]);
+
+  // Get suggested tags based on current input
+  const suggestedTags = useMemo(() => {
+    if (!newTagInput.trim()) return existingTags;
+    const input = newTagInput.toLowerCase();
+    return existingTags.filter(tag =>
+      tag.toLowerCase().includes(input) && !selectedTags.includes(tag)
+    ).slice(0, 5);
+  }, [newTagInput, existingTags, selectedTags]);
+
+  const handleAddTag = (tag: string) => {
+    const trimmedTag = tag.trim().toLowerCase();
+    if (trimmedTag && !selectedTags.includes(trimmedTag)) {
+      setSelectedTags(prev => [...prev, trimmedTag]);
+    }
+    setNewTagInput('');
+    setIsAddingTag(false);
+  };
+
+  const handleRemoveTag = (tag: string) => {
+    setSelectedTags(prev => prev.filter(t => t !== tag));
+  };
+
+  const handleTagInputKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (newTagInput.trim()) {
+        handleAddTag(newTagInput);
+      }
+    } else if (e.key === 'Escape') {
+      setIsAddingTag(false);
+      setNewTagInput('');
+    }
+  };
+
+  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    const newAttachments: Attachment[] = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+
+      // File size limit: 5MB
+      if (file.size > 5 * 1024 * 1024) {
+        alert(`File "${file.name}" is too large. Maximum size is 5MB.`);
+        continue;
+      }
+
+      // Detect file type
+      let type: Attachment['type'] = 'file';
+      if (file.type.includes('pdf')) type = 'pdf';
+      else if (file.type.includes('sheet') || file.type.includes('excel')) type = 'excel';
+      else if (file.type.includes('image')) type = 'image';
+      else if (file.type.includes('text') || file.name.match(/\.(js|ts|tsx|py|java|cpp|css|html)$/)) type = 'code';
+
+      // Read file as base64
+      const base64 = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const result = reader.result as string;
+          resolve(result.split(',')[1]); // Remove data URL prefix
+        };
+        reader.readAsDataURL(file);
+      });
+
+      newAttachments.push({
+        id: `att-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        name: file.name,
+        type,
+        data: base64,
+        meta: `${(file.size / 1024).toFixed(1)} KB`
+      });
+    }
+
+    setAttachments(prev => [...prev, ...newAttachments]);
+    setIsComposing(true);
+
+    // Reset file input
+    if (event.target) {
+      event.target.value = '';
+    }
+  };
+
+  const handleRemoveAttachment = (id: string) => {
+    setAttachments(prev => prev.filter(att => att.id !== id));
+  };
+
+  // Drag and drop handlers
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+
+    // Reuse the file processing logic from handleFileSelect
+    const newAttachments: Attachment[] = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+
+      // File size limit: 5MB
+      if (file.size > 5 * 1024 * 1024) {
+        alert(`File "${file.name}" is too large. Maximum size is 5MB.`);
+        continue;
+      }
+
+      // Detect file type
+      let type: Attachment['type'] = 'file';
+      if (file.type.includes('pdf')) type = 'pdf';
+      else if (file.type.includes('sheet') || file.type.includes('excel')) type = 'excel';
+      else if (file.type.includes('image')) type = 'image';
+      else if (file.type.includes('text') || file.name.match(/\.(js|ts|tsx|py|java|cpp|css|html)$/)) type = 'code';
+
+      // Read file as base64
+      const base64 = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const result = reader.result as string;
+          resolve(result.split(',')[1]); // Remove data URL prefix
+        };
+        reader.readAsDataURL(file);
+      });
+
+      newAttachments.push({
+        id: `att-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        name: file.name,
+        type,
+        data: base64,
+        meta: `${(file.size / 1024).toFixed(1)} KB`
+      });
+    }
+
+    setAttachments(prev => [...prev, ...newAttachments]);
+    setIsComposing(true);
+  };
+
   const handleSend = async () => {
-    if (!inputText.trim()) return;
-    const tags = await suggestTags(inputText);
-    onSendMessage(inputText, tags, []); 
+    if (!inputText.trim() && attachments.length === 0) return;
+
+    // Use selectedTags if any, otherwise fallback to AI suggestion
+    let finalTags = [...selectedTags]; // Copy to avoid reference issues
+    if (finalTags.length === 0 && inputText.trim()) {
+      finalTags = await suggestTags(inputText);
+    }
+
+    onSendMessage(inputText || '(Attachment)', finalTags, attachments);
     setInputText('');
+    setSelectedTags([]);
+    setAttachments([]);
     setIsComposing(false);
   };
 
@@ -288,11 +477,7 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
                 </button>
              )
            )}
-           <div className="h-4 w-px bg-stone-300 dark:bg-basalt-700"></div>
-           <div className="flex gap-1">
-             <button className="p-1.5 text-stone-400 hover:text-stone-700 dark:hover:text-stone-200 rounded-md hover:bg-stone-100 dark:hover:bg-basalt-800 transition-colors"><Calendar size={16} /></button>
-             <button className="p-1.5 text-stone-400 hover:text-stone-700 dark:hover:text-stone-200 rounded-md hover:bg-stone-100 dark:hover:bg-basalt-800 transition-colors"><MoreHorizontal size={16} /></button>
-           </div>
+           {/* Removed non-functional buttons (Calendar, MoreHorizontal) */}
         </div>
       </div>
 
@@ -300,27 +485,172 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
       <div className="flex-1 overflow-y-auto px-6 py-6 scroll-smooth custom-scrollbar">
         
         {/* Deposit Box (Input) */}
-        <div className={`mb-10 transition-all duration-300 ${isComposing ? 'shadow-lg ring-1 ring-stone-200 dark:ring-basalt-700' : 'shadow-sm hover:shadow-md'} bg-white dark:bg-basalt-800 border border-stone-200 dark:border-basalt-700 rounded-xl overflow-hidden`}>
+        <div
+          className={`mb-10 transition-all duration-300 ${
+            isDragging
+              ? 'shadow-2xl ring-2 ring-teal-500 border-teal-500 bg-teal-50 dark:bg-teal-900/20'
+              : isComposing
+                ? 'shadow-lg ring-1 ring-stone-200 dark:ring-basalt-700'
+                : 'shadow-sm hover:shadow-md'
+          } bg-white dark:bg-basalt-800 border border-stone-200 dark:border-basalt-700 rounded-xl overflow-hidden relative`}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
+           {/* Drag overlay */}
+           {isDragging && (
+             <div className="absolute inset-0 bg-teal-500/10 dark:bg-teal-400/10 flex items-center justify-center z-10 pointer-events-none">
+               <div className="text-center">
+                 <Paperclip size={48} className="mx-auto mb-2 text-teal-600 dark:text-teal-400" />
+                 <p className="text-sm font-medium text-teal-700 dark:text-teal-300">Drop files here to upload</p>
+               </div>
+             </div>
+           )}
            <div className="p-4">
              <textarea
                ref={textareaRef}
                value={inputText}
                onChange={(e) => setInputText(e.target.value)}
                onFocus={() => setIsComposing(true)}
-               onBlur={() => !inputText && setIsComposing(false)}
+               onBlur={() => !inputText && selectedTags.length === 0 && attachments.length === 0 && setIsComposing(false)}
                placeholder={t('depositPlaceholder')}
                className="w-full resize-none outline-none text-sm font-serif text-stone-800 dark:text-stone-100 placeholder-stone-400 dark:placeholder-stone-500 min-h-[24px] bg-transparent leading-relaxed"
                rows={1}
              />
            </div>
-           
+
+           {/* Tags Section */}
+           {isComposing && (
+             <div className="px-4 pb-3 animate-in fade-in slide-in-from-top-1">
+               <div className="flex flex-wrap items-center gap-2">
+                 {/* Selected Tags */}
+                 {selectedTags.map(tag => (
+                   <div
+                     key={tag}
+                     className="flex items-center gap-1 bg-teal-50 dark:bg-teal-900/20 border border-teal-200 dark:border-teal-800 text-teal-700 dark:text-teal-300 px-2 py-1 rounded-md text-xs font-medium group"
+                   >
+                     <Hash size={10} />
+                     <span>{tag}</span>
+                     <button
+                       onClick={() => handleRemoveTag(tag)}
+                       className="ml-1 hover:text-teal-900 dark:hover:text-teal-100 transition-colors"
+                     >
+                       <X size={12} />
+                     </button>
+                   </div>
+                 ))}
+
+                 {/* Add Tag Input or Button */}
+                 {isAddingTag ? (
+                   <div className="relative flex items-center">
+                     <Hash size={10} className="text-stone-400 mr-1" />
+                     <input
+                       ref={tagInputRef}
+                       type="text"
+                       value={newTagInput}
+                       onChange={(e) => setNewTagInput(e.target.value)}
+                       onKeyDown={handleTagInputKeyDown}
+                       onBlur={() => {
+                         if (newTagInput.trim()) {
+                           handleAddTag(newTagInput);
+                         } else {
+                           setIsAddingTag(false);
+                         }
+                       }}
+                       placeholder="tag-name"
+                       className="bg-stone-50 dark:bg-basalt-900 border border-stone-300 dark:border-basalt-600 text-stone-800 dark:text-stone-200 px-2 py-1 rounded-md text-xs outline-none focus:border-teal-500 dark:focus:border-teal-400 w-32"
+                     />
+
+                     {/* Tag Suggestions Dropdown */}
+                     {newTagInput.trim() && suggestedTags.length > 0 && (
+                       <div className="absolute top-full left-0 mt-1 bg-white dark:bg-basalt-800 border border-stone-200 dark:border-basalt-700 rounded-md shadow-lg z-10 w-48 max-h-32 overflow-y-auto">
+                         {suggestedTags.map(tag => (
+                           <button
+                             key={tag}
+                             onClick={() => handleAddTag(tag)}
+                             className="w-full text-left px-3 py-1.5 text-xs text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-basalt-700 flex items-center gap-1.5 transition-colors"
+                           >
+                             <Hash size={10} className="text-stone-400" />
+                             {tag}
+                           </button>
+                         ))}
+                       </div>
+                     )}
+                   </div>
+                 ) : (
+                   <button
+                     onClick={() => setIsAddingTag(true)}
+                     className="flex items-center gap-1 text-stone-500 dark:text-stone-400 hover:text-teal-600 dark:hover:text-teal-400 hover:bg-stone-100 dark:hover:bg-basalt-900 px-2 py-1 rounded-md text-xs transition-colors"
+                   >
+                     <Plus size={12} />
+                     <span>Add tag</span>
+                   </button>
+                 )}
+               </div>
+             </div>
+           )}
+
+           {/* Attachments Section */}
+           {isComposing && attachments.length > 0 && (
+             <div className="px-4 pb-3 animate-in fade-in slide-in-from-top-1">
+               <div className="flex flex-wrap gap-2">
+                 {attachments.map(att => (
+                   <div
+                     key={att.id}
+                     className="flex items-center gap-2 bg-stone-100 dark:bg-basalt-900 border border-stone-200 dark:border-basalt-700 rounded-lg px-3 py-2 text-xs group hover:border-teal-300 dark:hover:border-teal-700 transition-colors"
+                   >
+                     <div className={`p-1 rounded ${
+                       att.type === 'pdf' ? 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400' :
+                       att.type === 'excel' ? 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400' :
+                       att.type === 'image' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' :
+                       att.type === 'code' ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400' :
+                       'bg-stone-200 dark:bg-basalt-700 text-stone-600 dark:text-stone-400'
+                     }`}>
+                       {att.type === 'pdf' ? <FileText size={14} /> :
+                        att.type === 'excel' ? <FileSpreadsheet size={14} /> :
+                        att.type === 'image' ? <File size={14} /> :
+                        att.type === 'code' ? <File size={14} /> :
+                        <File size={14} />}
+                     </div>
+                     <div className="flex flex-col min-w-0">
+                       <span className="font-medium text-stone-700 dark:text-stone-200 truncate max-w-[150px]">{att.name}</span>
+                       <span className="text-stone-400 dark:text-stone-500 text-[10px]">{att.meta}</span>
+                     </div>
+                     <button
+                       onClick={() => handleRemoveAttachment(att.id)}
+                       className="ml-1 text-stone-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                       title="Remove attachment"
+                     >
+                       <X size={14} />
+                     </button>
+                   </div>
+                 ))}
+               </div>
+             </div>
+           )}
+
+           {/* Action Buttons */}
            {isComposing && (
              <div className="bg-stone-50 dark:bg-basalt-900/50 px-3 py-2 border-t border-stone-100 dark:border-basalt-700 flex justify-between items-center animate-in fade-in slide-in-from-top-1">
                 <div className="flex items-center gap-2">
-                   <button className="p-1.5 text-stone-400 hover:text-stone-700 dark:hover:text-stone-300 hover:bg-stone-100 dark:hover:bg-basalt-800 rounded transition-colors"><Paperclip size={16} /></button>
-                   <button className="p-1.5 text-stone-400 hover:text-stone-700 dark:hover:text-stone-300 hover:bg-stone-100 dark:hover:bg-basalt-800 rounded transition-colors"><Hash size={16} /></button>
+                   {/* Hidden file input */}
+                   <input
+                     ref={fileInputRef}
+                     type="file"
+                     multiple
+                     accept=".pdf,.xlsx,.xls,.jpg,.jpeg,.png,.gif,.txt,.js,.ts,.tsx,.py,.java,.cpp,.css,.html"
+                     onChange={handleFileSelect}
+                     className="hidden"
+                   />
+                   <button
+                     onClick={() => fileInputRef.current?.click()}
+                     className="p-1.5 text-stone-400 hover:text-stone-700 dark:hover:text-stone-300 hover:bg-stone-100 dark:hover:bg-basalt-800 rounded transition-colors"
+                     title="Attach file"
+                   >
+                     <Paperclip size={16} />
+                   </button>
                 </div>
-                <button 
+                <button
                   onClick={handleSend}
                   className="bg-stone-800 hover:bg-stone-900 dark:bg-stone-200 dark:hover:bg-white text-white dark:text-stone-900 text-xs font-medium px-3 py-1.5 rounded-md flex items-center gap-2 transition-all shadow-sm"
                 >

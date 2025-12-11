@@ -8,76 +8,76 @@ import { LanguageProvider } from './contexts/LanguageContext';
 import { SettingsProvider } from './contexts/SettingsContext';
 import { SettingsModal } from './components/SettingsModal';
 
-// Mock Data
+// Demo Data - Keep one example to guide users
 const INITIAL_TASKS: TaskNode[] = [
   {
-    id: 'p1',
-    title: 'PhD Thesis: Neural Arch',
+    id: 'demo-project',
+    title: '📚 Welcome to Strata - Demo Project',
     status: 'active',
     children: [
-      { id: 't1', title: 'Literature Review', status: 'completed' },
-      { id: 't2', title: 'Exp 4: Latency Analysis', status: 'blocked' },
-      { id: 't3', title: 'Drafting Chapter 3', status: 'active' },
-    ]
-  },
-  {
-    id: 'p2',
-    title: 'Side Project: Strata',
-    status: 'pending',
-    children: [
-      { id: 't4', title: 'UI Design', status: 'completed' },
-      { id: 't5', title: 'Integration', status: 'pending' }
+      { id: 'demo-task-1', title: 'Click here to see how tasks work', status: 'pending' },
+      { id: 'demo-task-2', title: 'Right-click to see more options', status: 'pending' }
     ]
   }
 ];
 
 const INITIAL_MESSAGES: Message[] = [
   {
-    id: 'msg-001',
-    content: 'Reviewing the latest paper on Transformers. The attention mechanism implementation seems divergent from the standard protocol.',
-    timestamp: new Date(Date.now() - 86400000),
-    version: 1,
-    author: 'user',
-    tags: ['literature', 'transformers'],
-    attachments: [{ id: 'a1', type: 'pdf', name: 'Attention_is_all_you_need.pdf', meta: '14 pages' }],
-    projectId: 'p1',
-    relatedIds: ['msg-002']
-  },
-  {
-    id: 'msg-002',
-    content: 'Experimental results from run #402 show a 15% increase in throughput. Need to verify if this is due to the new caching layer.',
-    timestamp: new Date(Date.now() - 3600000),
-    version: 2,
-    author: 'user',
-    tags: ['experiment', 'data'],
-    attachments: [{ id: 'a2', type: 'excel', name: 'run_402_metrics.xlsx', meta: '24KB' }],
-    projectId: 'p1',
-    relatedIds: ['msg-001']
-  },
-  {
-    id: 'msg-003',
-    content: 'Need to research proper color palettes for the dark mode UI. The current basalt shades are too blue.',
+    id: 'demo-msg-001',
+    content: '👋 Welcome to Strata! This is a demo message to help you get started.\n\n**Quick Tips:**\n- Click the "+" button to create new messages\n- Use tags to organize your notes\n- Try the AI Copilot on the right panel\n- Configure your LLM in Settings (⚙️)\n\nYou can delete this message once you\'re familiar with Strata.',
     timestamp: new Date(),
     version: 1,
     author: 'user',
-    tags: ['ui', 'design'],
+    tags: ['demo', 'getting-started'],
     attachments: [],
-    projectId: undefined // Inbox item
+    projectId: 'demo-project',
+    relatedIds: []
   }
 ];
 
 const AppContent: React.FC = () => {
-  const [tasks, setTasks] = useState<TaskNode[]>(INITIAL_TASKS);
-  const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
-  const [activeProjectId, setActiveProjectId] = useState<string | null>('p1');
-  
+  // Load data from localStorage or use initial data
+  const [tasks, setTasks] = useState<TaskNode[]>(() => {
+    try {
+      const stored = localStorage.getItem('strata_tasks');
+      return stored ? JSON.parse(stored) : INITIAL_TASKS;
+    } catch {
+      return INITIAL_TASKS;
+    }
+  });
+
+  const [messages, setMessages] = useState<Message[]>(() => {
+    try {
+      const stored = localStorage.getItem('strata_messages');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        // Parse date strings back to Date objects
+        return parsed.map((msg: any) => ({
+          ...msg,
+          timestamp: new Date(msg.timestamp)
+        }));
+      }
+      return INITIAL_MESSAGES;
+    } catch {
+      return INITIAL_MESSAGES;
+    }
+  });
+
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(() => {
+    const stored = localStorage.getItem('strata_activeProject');
+    return stored || (tasks.length > 0 ? tasks[0].id : null);
+  });
+
   // Right Panel State
   const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>('collapsed');
   const [selectedContextMessage, setSelectedContextMessage] = useState<Message | null>(null);
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
-  
-  const [isDarkMode, setIsDarkMode] = useState(false);
-  
+
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const stored = localStorage.getItem('strata_darkMode');
+    return stored === 'true';
+  });
+
   // Search State
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -86,6 +86,46 @@ const AppContent: React.FC = () => {
 
   // Settings State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  // Persist tasks to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('strata_tasks', JSON.stringify(tasks));
+    } catch (error) {
+      console.error('[App] Failed to save tasks:', error);
+    }
+  }, [tasks]);
+
+  // Persist messages to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('strata_messages', JSON.stringify(messages));
+    } catch (error) {
+      console.error('[App] Failed to save messages:', error);
+    }
+  }, [messages]);
+
+  // Persist active project
+  useEffect(() => {
+    try {
+      if (activeProjectId) {
+        localStorage.setItem('strata_activeProject', activeProjectId);
+      } else {
+        localStorage.removeItem('strata_activeProject');
+      }
+    } catch (error) {
+      console.error('[App] Failed to save active project:', error);
+    }
+  }, [activeProjectId]);
+
+  // Persist dark mode
+  useEffect(() => {
+    try {
+      localStorage.setItem('strata_darkMode', isDarkMode.toString());
+    } catch (error) {
+      console.error('[App] Failed to save dark mode:', error);
+    }
+  }, [isDarkMode]);
 
   // Derived state for filtering
   const displayedMessages = messages.filter(m => {
@@ -189,19 +229,99 @@ const AppContent: React.FC = () => {
 
   const toggleTheme = () => setIsDarkMode(!isDarkMode);
 
+  const handleAddProject = (title: string) => {
+    const newProject: TaskNode = {
+      id: `project-${Date.now()}`,
+      title,
+      status: 'active',
+      children: []
+    };
+    setTasks(prev => [...prev, newProject]);
+  };
+
+  const handleAddTask = (parentId: string, title: string) => {
+    const newTask: TaskNode = {
+      id: `task-${Date.now()}`,
+      title,
+      status: 'pending',
+      children: []
+    };
+
+    const addTaskToNode = (node: TaskNode): TaskNode => {
+      if (node.id === parentId) {
+        return {
+          ...node,
+          children: [...(node.children || []), newTask]
+        };
+      }
+      if (node.children) {
+        return {
+          ...node,
+          children: node.children.map(addTaskToNode)
+        };
+      }
+      return node;
+    };
+
+    setTasks(prev => prev.map(addTaskToNode));
+  };
+
+  const handleDeleteProject = (id: string) => {
+    const deleteFromNode = (node: TaskNode): TaskNode | null => {
+      if (node.id === id) {
+        return null; // Mark for deletion
+      }
+      if (node.children) {
+        return {
+          ...node,
+          children: node.children.map(deleteFromNode).filter(n => n !== null) as TaskNode[]
+        };
+      }
+      return node;
+    };
+
+    setTasks(prev => prev.map(deleteFromNode).filter(n => n !== null) as TaskNode[]);
+
+    // Clear selection if deleted project was active
+    if (activeProjectId === id) {
+      setActiveProjectId(null);
+    }
+  };
+
+  const handleUpdateProject = (id: string, updates: Partial<TaskNode>) => {
+    const updateNode = (node: TaskNode): TaskNode => {
+      if (node.id === id) {
+        return { ...node, ...updates };
+      }
+      if (node.children) {
+        return {
+          ...node,
+          children: node.children.map(updateNode)
+        };
+      }
+      return node;
+    };
+
+    setTasks(prev => prev.map(updateNode));
+  };
+
   return (
     <div className={isDarkMode ? 'dark' : ''}>
       <div className="flex h-screen w-screen overflow-hidden bg-stone-50 dark:bg-basalt-900 transition-colors duration-300">
         {/* Sidebar */}
-        <Sidebar 
-          tasks={tasks} 
-          inboxCount={inboxCount} 
+        <Sidebar
+          tasks={tasks}
+          inboxCount={inboxCount}
           activeProjectId={activeProjectId}
           onSelectProject={setActiveProjectId}
           isDarkMode={isDarkMode}
           toggleTheme={toggleTheme}
           onSearch={setSearchQuery}
           onOpenSettings={() => setIsSettingsOpen(true)}
+          onAddProject={handleAddProject}
+          onAddTask={handleAddTask}
+          onDeleteProject={handleDeleteProject}
+          onUpdateProject={handleUpdateProject}
         />
 
         {/* Main Content */}

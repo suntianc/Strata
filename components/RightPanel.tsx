@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Message, ChatMessage } from '../types';
 import { Bot, X, Sparkles, Send, BookOpen, Microscope, PanelRightClose, PanelRightOpen, ArrowRight, Clock, Hash, Layers, FileText } from 'lucide-react';
-import { generateAnalysis } from '../services/geminiService';
+import { LLMService } from '../services/llmService';
 import { useTranslation } from '../contexts/LanguageContext';
+import { useSettings } from '../contexts/SettingsContext';
 
 export type RightPanelMode = 'collapsed' | 'info' | 'chat';
 
@@ -52,19 +53,21 @@ const AIMessage: React.FC<{ content: string; onCitationClick: (id: string) => vo
 
 export const RightPanel: React.FC<RightPanelProps> = ({ mode, setMode, contextMessage, onCitationClick, messages }) => {
   const { t, language } = useTranslation();
+  const { settings } = useSettings();
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const isOpen = mode !== 'collapsed';
 
-  // Initialize chat when opened
-  useEffect(() => {
-    if (chatHistory.length === 0) {
-      setChatHistory([{ id: 'init', role: 'model', content: t('readyToAnalyze') }]);
-    }
-  }, [t, chatHistory.length]);
+  // Initialize chat when opened - removed initial message for clean start
+  // useEffect(() => {
+  //   if (chatHistory.length === 0) {
+  //     setChatHistory([{ id: 'init', role: 'model', content: t('readyToAnalyze') }]);
+  //   }
+  // }, [t, chatHistory.length]);
 
   // Scroll to bottom
   useEffect(() => {
@@ -95,23 +98,72 @@ export const RightPanel: React.FC<RightPanelProps> = ({ mode, setMode, contextMe
     setChatHistory(prev => [...prev, userMsg]);
     setInput('');
     setIsLoading(true);
+    setError(null);
 
-    const responseText = await generateAnalysis(input, contextMessage ? [contextMessage.content] : [], language);
-    
-    // Simulate inserting a ref if context exists (mock AI behavior for demo)
-    let finalContent = responseText;
-    if (contextMessage && !responseText.includes('[Ref:')) {
-       finalContent += `\n\nBased on [Ref: ${contextMessage.id}]`;
+    try {
+      // Create LLM service with user's configured settings
+      const llmService = new LLMService(settings.llm);
+
+      // Build context
+      const contextStr = contextMessage ? contextMessage.content : '';
+      const languageInstruction = language === 'zh'
+        ? "Reply in Simplified Chinese (简体中文). Keep technical terms if necessary."
+        : "Reply in English.";
+
+      // Build conversation history for the LLM
+      const conversationMessages = chatHistory
+        .filter(msg => msg.role !== 'model' || !msg.content.includes(t('readyToAnalyze')))
+        .map(msg => ({
+          role: msg.role === 'model' ? ('assistant' as const) : ('user' as const),
+          content: msg.content
+        }));
+
+      // Add system context and current user message
+      const systemPrompt = `System Instruction: You are "Strata Copilot", a research assistant.
+Your output should look like an analysis report.
+Use Markdown. Be concise, academic, and structured.
+${languageInstruction}
+
+${contextStr ? `Context Data (Current layer):\n${contextStr}\n\n` : ''}`;
+
+      const messages = [
+        ...conversationMessages,
+        { role: 'user' as const, content: systemPrompt + input }
+      ];
+
+      // Generate response
+      const responseText = await llmService.generateChatCompletion(messages, {
+        temperature: 0.7,
+        maxTokens: 2000
+      });
+
+      // Add citation if context exists
+      let finalContent = responseText;
+      if (contextMessage && !responseText.includes('[Ref:')) {
+        finalContent += `\n\nBased on [Ref: ${contextMessage.id}]`;
+      }
+
+      const aiMsg: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        role: 'model',
+        content: finalContent
+      };
+
+      setChatHistory(prev => [...prev, aiMsg]);
+    } catch (error: any) {
+      console.error('[RightPanel] LLM Error:', error);
+      setError(error.message || 'Failed to generate response');
+
+      // Add error message to chat
+      const errorMsg: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        role: 'model',
+        content: `⚠️ Error: ${error.message || 'Failed to generate response'}\n\nPlease check your LLM configuration in Settings.`
+      };
+      setChatHistory(prev => [...prev, errorMsg]);
+    } finally {
+      setIsLoading(false);
     }
-
-    const aiMsg: ChatMessage = { 
-      id: (Date.now() + 1).toString(), 
-      role: 'model', 
-      content: finalContent 
-    };
-
-    setChatHistory(prev => [...prev, aiMsg]);
-    setIsLoading(false);
   };
 
   // Find related messages for Info Mode
@@ -206,18 +258,49 @@ export const RightPanel: React.FC<RightPanelProps> = ({ mode, setMode, contextMe
                    <section>
                      <div className="text-[10px] font-bold text-stone-400 dark:text-stone-500 uppercase tracking-widest mb-4">{t('versionHistory')}</div>
                      <div className="relative pl-3 space-y-4 border-l border-stone-200 dark:border-basalt-700">
-                        <div className="relative">
-                          <div className="absolute -left-[17px] top-1.5 w-2 h-2 rounded-full bg-teal-500 ring-4 ring-white dark:ring-basalt-900"></div>
-                          <div className="text-xs font-bold text-stone-800 dark:text-stone-200">v{contextMessage.version} ({t('current')})</div>
-                          <div className="text-[10px] text-stone-400">{t('justNow')}</div>
-                        </div>
-                        {contextMessage.version > 1 && (
-                          <div className="relative opacity-60">
-                            <div className="absolute -left-[17px] top-1.5 w-2 h-2 rounded-full bg-stone-300 dark:bg-basalt-600 ring-4 ring-white dark:ring-basalt-900"></div>
-                            <div className="text-xs font-bold text-stone-600 dark:text-stone-400">v{contextMessage.version - 1}</div>
-                            <div className="text-[10px] text-stone-400">2 {t('hours_ago')}</div>
-                          </div>
-                        )}
+                        {/* Generate complete version history */}
+                        {Array.from({ length: contextMessage.version }, (_, i) => {
+                          const versionNum = contextMessage.version - i;
+                          const isCurrent = versionNum === contextMessage.version;
+
+                          // Calculate approximate timestamp for each version
+                          // Assuming each version was created 2 hours before the next one
+                          const hoursAgo = i * 2;
+                          const versionTimestamp = new Date(contextMessage.timestamp.getTime() - hoursAgo * 60 * 60 * 1000);
+
+                          // Format relative time
+                          const getRelativeTime = (date: Date) => {
+                            const now = new Date();
+                            const diffMs = now.getTime() - date.getTime();
+                            const diffMins = Math.floor(diffMs / 60000);
+                            const diffHours = Math.floor(diffMs / 3600000);
+                            const diffDays = Math.floor(diffMs / 86400000);
+
+                            if (diffMins < 1) return t('justNow');
+                            if (diffMins < 60) return `${diffMins} min ago`;
+                            if (diffHours < 24) return `${diffHours} hr ago`;
+                            return `${diffDays} days ago`;
+                          };
+
+                          return (
+                            <div key={versionNum} className={`relative ${!isCurrent ? 'opacity-60' : ''}`}>
+                              <div className={`absolute -left-[17px] top-1.5 w-2 h-2 rounded-full ring-4 ring-white dark:ring-basalt-900 ${
+                                isCurrent ? 'bg-teal-500' : 'bg-stone-300 dark:bg-basalt-600'
+                              }`}></div>
+                              <div className={`text-xs font-bold ${
+                                isCurrent ? 'text-stone-800 dark:text-stone-200' : 'text-stone-600 dark:text-stone-400'
+                              }`}>
+                                v{versionNum} {isCurrent && `(${t('current')})`}
+                              </div>
+                              <div className="text-[10px] text-stone-400">
+                                {isCurrent ? t('justNow') : getRelativeTime(versionTimestamp)}
+                              </div>
+                              <div className="text-[10px] text-stone-400 mt-0.5">
+                                by {t('you')}
+                              </div>
+                            </div>
+                          );
+                        })}
                      </div>
                    </section>
 
@@ -256,20 +339,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({ mode, setMode, contextMe
           {/* Mode 2: Chat Copilot */}
           {mode === 'chat' && (
             <>
-              {/* Context Indicator */}
-              {contextMessage && (
-                <div className="px-4 py-3 bg-stone-100 dark:bg-basalt-800 border-b border-stone-200 dark:border-basalt-700 flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-xs text-stone-600 dark:text-stone-400">
-                    <BookOpen size={12} className="text-terracotta-500" />
-                    <span className="font-medium">{t('scope')}: </span>
-                    <span className="truncate max-w-[200px]">Layer {contextMessage.timestamp.toLocaleTimeString()}</span>
-                    {contextMessage.attachments.length > 0 && <span className="bg-stone-200 dark:bg-basalt-600 px-1.5 rounded text-[10px]">+{contextMessage.attachments.length} {t('files')}</span>}
-                  </div>
-                  <button onClick={() => {}} className="text-stone-400 hover:text-stone-600 dark:hover:text-stone-200">
-                     <X size={12} />
-                  </button>
-                </div>
-              )}
+              {/* Removed Context Indicator / Scope display as it had no actual functionality */}
 
               {/* Messages */}
               <div className="flex-1 overflow-y-auto p-5 space-y-8 bg-stone-50/50 dark:bg-basalt-900/50" ref={scrollRef}>

@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
-import { X, User, Cpu, Server, Save, Check } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, User, Cpu, Server, Save, Check, Loader2, CheckCircle, XCircle } from 'lucide-react';
 import { useTranslation } from '../contexts/LanguageContext';
 import { useSettings } from '../contexts/SettingsContext';
 import { ModelConfig } from '../types';
+import { LLMService } from '../services/llmService';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -14,6 +15,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
   const { settings, updateProfile, updateLLM, updateEmbedding } = useSettings();
   const [activeTab, setActiveTab] = useState<'profile' | 'models'>('profile');
   const [isSaved, setIsSaved] = useState(false);
+  const [testingLLM, setTestingLLM] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   // Local state for form handling before saving? 
   // For simplicity in this demo, we'll sync with context immediately or on blur, 
@@ -27,6 +30,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
   const [localLLM, setLocalLLM] = useState(settings.llm);
   const [localEmbedding, setLocalEmbedding] = useState(settings.embedding);
 
+  // Sync local state when modal opens or settings change
+  useEffect(() => {
+    if (isOpen) {
+      setLocalProfile(settings.profile);
+      setLocalLLM(settings.llm);
+      setLocalEmbedding(settings.embedding);
+      setTestResult(null);
+    }
+  }, [isOpen, settings]);
+
   if (!isOpen) return null;
 
   const handleSave = () => {
@@ -34,8 +47,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
     updateLLM(localLLM);
     updateEmbedding(localEmbedding);
     setIsSaved(true);
+    setTestResult(null);
     setTimeout(() => setIsSaved(false), 2000);
     // onClose(); // Optional: close on save
+  };
+
+  const handleTestLLM = async () => {
+    setTestingLLM(true);
+    setTestResult(null);
+
+    try {
+      const service = new LLMService(localLLM);
+      const result = await service.testConnection();
+      setTestResult(result);
+    } catch (error: any) {
+      setTestResult({ success: false, message: error.message });
+    } finally {
+      setTestingLLM(false);
+    }
   };
 
   const providers = [
@@ -173,13 +202,55 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                 
                 <div className="space-y-2">
                    <label className="text-xs font-bold text-stone-500 uppercase tracking-wide">{t('api_key')}</label>
-                   <input 
-                      type="password" 
+                   <input
+                      type="password"
                       value={localLLM.apiKey || ''}
                       onChange={(e) => setLocalLLM({...localLLM, apiKey: e.target.value})}
                       placeholder={localLLM.provider === 'gemini' ? "Starts with AIza..." : "Optional for local"}
                       className="w-full bg-white dark:bg-basalt-800 border border-stone-200 dark:border-basalt-700 rounded-lg px-4 py-2.5 text-sm focus:ring-1 focus:ring-teal-500 outline-none font-mono"
                     />
+                </div>
+
+                {/* Test Connection Button */}
+                <div className="pt-2">
+                  <button
+                    onClick={handleTestLLM}
+                    disabled={testingLLM}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg border border-stone-300 dark:border-basalt-700 hover:bg-stone-50 dark:hover:bg-basalt-800 transition-colors text-sm font-medium text-stone-700 dark:text-stone-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {testingLLM ? (
+                      <>
+                        <Loader2 size={14} className="animate-spin" />
+                        <span>Testing Connection...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Cpu size={14} />
+                        <span>Test Connection</span>
+                      </>
+                    )}
+                  </button>
+
+                  {/* Test Result */}
+                  {testResult && (
+                    <div className={`mt-3 p-3 rounded-lg border ${testResult.success ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'}`}>
+                      <div className="flex items-start gap-2">
+                        {testResult.success ? (
+                          <CheckCircle size={16} className="text-green-600 dark:text-green-400 mt-0.5 flex-shrink-0" />
+                        ) : (
+                          <XCircle size={16} className="text-red-600 dark:text-red-400 mt-0.5 flex-shrink-0" />
+                        )}
+                        <div className="flex-1">
+                          <div className={`text-xs font-bold ${testResult.success ? 'text-green-800 dark:text-green-300' : 'text-red-800 dark:text-red-300'}`}>
+                            {testResult.success ? '✓ Connection Successful' : '✗ Connection Failed'}
+                          </div>
+                          <div className={`text-xs mt-1 whitespace-pre-wrap ${testResult.success ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>
+                            {testResult.message}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </section>
 
