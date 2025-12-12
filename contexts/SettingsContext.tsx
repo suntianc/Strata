@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import { AppSettings, UserProfile, ModelConfig } from '../types';
-import { db } from '../services/database';
+import { db } from '../services/database.v2';
 
 const DEFAULT_SETTINGS: AppSettings = {
   profile: {
@@ -40,30 +40,33 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
       try {
         await db.init();
 
-        // Try to load settings from database
-        const dbSettings = await db.getSettings();
+        // Check if database is available
+        if (db.isDatabaseAvailable()) {
+          // Try to load settings from database
+          const dbSettings = await db.getSettings();
 
-        if (dbSettings) {
-          setSettings(dbSettings);
-          console.log('[SettingsContext] Settings loaded from database');
-        } else {
-          // Try to migrate from localStorage
-          const stored = localStorage.getItem('strata_settings');
-          if (stored) {
-            const parsed = JSON.parse(stored);
-            const migratedSettings = {
-              profile: { ...DEFAULT_SETTINGS.profile, ...parsed.profile },
-              llm: { ...DEFAULT_SETTINGS.llm, ...parsed.llm },
-              embedding: { ...DEFAULT_SETTINGS.embedding, ...parsed.embedding },
-            };
-            await db.saveSettings(migratedSettings);
-            setSettings(migratedSettings);
-            console.log('[SettingsContext] Settings migrated from localStorage');
-          } else {
-            // Save default settings
-            await db.saveSettings(DEFAULT_SETTINGS);
-            console.log('[SettingsContext] Default settings saved');
+          if (dbSettings) {
+            setSettings(dbSettings);
+            console.log('[SettingsContext] Settings loaded from database');
+            setIsLoaded(true);
+            return;
           }
+        }
+
+        // Database not available or no settings - use localStorage
+        const stored = localStorage.getItem('strata_settings');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          const migratedSettings = {
+            profile: { ...DEFAULT_SETTINGS.profile, ...parsed.profile },
+            llm: { ...DEFAULT_SETTINGS.llm, ...parsed.llm },
+            embedding: { ...DEFAULT_SETTINGS.embedding, ...parsed.embedding },
+          };
+          setSettings(migratedSettings);
+          console.log('[SettingsContext] Settings loaded from localStorage');
+        } else {
+          setSettings(DEFAULT_SETTINGS);
+          console.log('[SettingsContext] Default settings loaded');
         }
 
         setIsLoaded(true);
@@ -83,8 +86,15 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
 
     const saveSettings = async () => {
       try {
-        await db.saveSettings(settings);
-        console.log('[SettingsContext] Settings saved to database');
+        // Check if database is available
+        if (db.isDatabaseAvailable()) {
+          await db.saveSettings(settings);
+          console.log('[SettingsContext] Settings saved to database');
+        } else {
+          // Use localStorage for browser mode
+          localStorage.setItem('strata_settings', JSON.stringify(settings));
+          console.log('[SettingsContext] Settings saved to localStorage');
+        }
       } catch (error) {
         console.error('[SettingsContext] Failed to save settings:', error);
       }

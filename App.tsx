@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { MessageStream } from './components/MessageStream';
 import { RightPanel, RightPanelMode } from './components/RightPanel';
@@ -10,6 +10,90 @@ import { SettingsProvider, useSettings } from './contexts/SettingsContext';
 import { SettingsModal } from './components/SettingsModal';
 import { DndContext, DragEndEvent, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { db } from './services/database.v2';
+import { useKeyboardShortcuts, useShortcutHelp, ShortcutConfig } from './hooks/useKeyboardShortcuts';
+import { X, Keyboard } from 'lucide-react';
+
+// Keyboard Shortcuts Help Panel Component
+const ShortcutHelpPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+  const { formatShortcut } = useShortcutHelp();
+
+  const shortcuts: ShortcutConfig[] = [
+    { key: 'k', ctrl: true, description: 'Quick search (focus search box)', handler: () => {} },
+    { key: 'n', ctrl: true, description: 'New note (focus message input)', handler: () => {} },
+    { key: ',', ctrl: true, description: 'Open settings', handler: () => {} },
+    { key: '/', ctrl: true, description: 'Toggle sidebar visibility', handler: () => {} },
+    { key: 'b', ctrl: true, description: 'Toggle dark/light mode', handler: () => {} },
+    { key: '?', shift: true, description: 'Show/hide keyboard shortcuts help', handler: () => {} },
+    { key: 'Escape', description: 'Close modals and panels', handler: () => {} },
+  ];
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 animate-in fade-in"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white dark:bg-basalt-800 rounded-xl shadow-2xl max-w-2xl w-full mx-4 max-h-[80vh] overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 border-b border-stone-200 dark:border-basalt-700">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-teal-50 dark:bg-teal-900/20 rounded-lg">
+              <Keyboard size={24} className="text-teal-600 dark:text-teal-400" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-stone-800 dark:text-stone-100">
+                Keyboard Shortcuts
+              </h2>
+              <p className="text-sm text-stone-500 dark:text-stone-400">
+                Navigate Strata faster with these shortcuts
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 hover:bg-stone-100 dark:hover:bg-basalt-700 rounded-lg transition-colors"
+          >
+            <X size={20} className="text-stone-400 hover:text-stone-600 dark:hover:text-stone-300" />
+          </button>
+        </div>
+
+        {/* Shortcuts List */}
+        <div className="p-6 overflow-y-auto max-h-[calc(80vh-120px)]">
+          <div className="space-y-3">
+            {shortcuts.map((shortcut, index) => (
+              <div
+                key={index}
+                className="flex items-center justify-between p-3 bg-stone-50 dark:bg-basalt-900 rounded-lg hover:bg-stone-100 dark:hover:bg-basalt-800 transition-colors"
+              >
+                <span className="text-sm text-stone-700 dark:text-stone-300">
+                  {shortcut.description}
+                </span>
+                <kbd className="px-3 py-1.5 bg-white dark:bg-basalt-700 border border-stone-300 dark:border-basalt-600 rounded-md text-xs font-mono font-bold text-stone-600 dark:text-stone-300 shadow-sm">
+                  {formatShortcut(shortcut)}
+                </kbd>
+              </div>
+            ))}
+          </div>
+
+          {/* Additional Tips */}
+          <div className="mt-6 p-4 bg-teal-50 dark:bg-teal-900/20 border border-teal-200 dark:border-teal-800 rounded-lg">
+            <h3 className="text-sm font-bold text-teal-800 dark:text-teal-300 mb-2">
+              💡 Pro Tips
+            </h3>
+            <ul className="text-xs text-teal-700 dark:text-teal-400 space-y-1">
+              <li>• Press <kbd className="px-1.5 py-0.5 bg-white dark:bg-teal-900 rounded text-[10px] font-mono">Enter</kbd> to send messages</li>
+              <li>• Press <kbd className="px-1.5 py-0.5 bg-white dark:bg-teal-900 rounded text-[10px] font-mono">Shift + Enter</kbd> for new line in message input</li>
+              <li>• Drag messages to tasks to convert them</li>
+              <li>• Right-click on tasks for more options</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // Demo Data - Keep one example to guide users
 const INITIAL_TASKS: TaskNode[] = [
@@ -65,6 +149,12 @@ const AppContent: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isOrganizing, setIsOrganizing] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isSidebarVisible, setIsSidebarVisible] = useState(true);
+  const [showShortcutHelp, setShowShortcutHelp] = useState(false);
+
+  // Refs for focusing elements
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const messageInputRef = useRef<HTMLTextAreaElement>(null);
 
   // Load data from database on mount
   useEffect(() => {
@@ -118,33 +208,62 @@ const AppContent: React.FC = () => {
         console.log('[App] 🌐 Running in Browser mode - initializing PGlite...');
         await db.init();
 
-        console.log('[App] Running migration from localStorage...');
-        await db.migrateFromLocalStorage();
+        if (db.isDatabaseAvailable()) {
+          console.log('[App] ✅ Database available, loading from PGlite...');
+          console.log('[App] Running migration from localStorage...');
+          await db.migrateFromLocalStorage();
 
-        console.log('[App] Loading data from database...');
-        const dbTasks = await db.getTasks();
-        const dbMessages = await db.getMessages();
-        const dbActiveProject = await db.getAppState('activeProject');
-        const dbDarkMode = await db.getAppState('darkMode');
+          console.log('[App] Loading data from database...');
+          const dbTasks = await db.getTasks();
+          const dbMessages = await db.getMessages();
+          const dbActiveProject = await db.getAppState('activeProject');
+          const dbDarkMode = await db.getAppState('darkMode');
 
-        if (dbTasks.length > 0) {
-          console.log(`[App] Loaded ${dbTasks.length} tasks from database`);
-          setTasks(dbTasks);
-        }
+          if (dbTasks.length > 0) {
+            console.log(`[App] Loaded ${dbTasks.length} tasks from database`);
+            setTasks(dbTasks);
+          }
 
-        if (dbMessages.length > 0) {
-          console.log(`[App] Loaded ${dbMessages.length} messages from database`);
-          setMessages(dbMessages);
-        }
+          if (dbMessages.length > 0) {
+            console.log(`[App] Loaded ${dbMessages.length} messages from database`);
+            setMessages(dbMessages);
+          }
 
-        if (dbActiveProject) {
-          setActiveProjectId(dbActiveProject);
-        } else if (dbTasks.length > 0) {
-          setActiveProjectId(dbTasks[0].id);
-        }
+          if (dbActiveProject) {
+            setActiveProjectId(dbActiveProject);
+          } else if (dbTasks.length > 0) {
+            setActiveProjectId(dbTasks[0].id);
+          }
 
-        if (dbDarkMode) {
-          setIsDarkMode(dbDarkMode === 'true');
+          if (dbDarkMode) {
+            setIsDarkMode(dbDarkMode === 'true');
+          }
+        } else {
+          console.log('[App] ⚠️ Database not available, falling back to localStorage...');
+          const storedTasks = localStorage.getItem('strata_tasks');
+          const storedMessages = localStorage.getItem('strata_messages');
+          const storedActiveProject = localStorage.getItem('strata_activeProject');
+          const storedDarkMode = localStorage.getItem('strata_darkMode');
+
+          if (storedTasks) {
+            const tasks = JSON.parse(storedTasks);
+            setTasks(tasks);
+            console.log(`[App] Loaded ${tasks.length} tasks from localStorage`);
+          }
+
+          if (storedMessages) {
+            const messages = JSON.parse(storedMessages);
+            setMessages(messages);
+            console.log(`[App] Loaded ${messages.length} messages from localStorage`);
+          }
+
+          if (storedActiveProject) {
+            setActiveProjectId(storedActiveProject);
+          }
+
+          if (storedDarkMode) {
+            setIsDarkMode(storedDarkMode === 'true');
+          }
         }
 
         setIsLoaded(true);
@@ -163,16 +282,14 @@ const AppContent: React.FC = () => {
 
     const saveTasks = async () => {
       try {
-        const isElectron = typeof window !== 'undefined' && window.electron !== undefined;
-
-        if (isElectron) {
-          // Electron mode: save to localStorage
-          localStorage.setItem('strata_tasks', JSON.stringify(tasks));
-          console.log('[App] ✅ Tasks saved to localStorage');
-        } else {
-          // Browser mode: save to PGlite
+        // Check if database is available (Electron mode with SQLite)
+        if (db.isDatabaseAvailable()) {
           await db.saveTasks(tasks);
           console.log('[App] ✅ Tasks saved to database');
+        } else {
+          // Browser mode: save to localStorage
+          localStorage.setItem('strata_tasks', JSON.stringify(tasks));
+          console.log('[App] ✅ Tasks saved to localStorage');
         }
       } catch (error) {
         console.error('[App] ❌ Failed to save tasks:', error);
@@ -187,16 +304,14 @@ const AppContent: React.FC = () => {
 
     const saveMessages = async () => {
       try {
-        const isElectron = typeof window !== 'undefined' && window.electron !== undefined;
-
-        if (isElectron) {
-          // Electron mode: save to localStorage
-          localStorage.setItem('strata_messages', JSON.stringify(messages));
-          console.log('[App] ✅ Messages saved to localStorage');
-        } else {
-          // Browser mode: save to PGlite
+        // Check if database is available (Electron mode with SQLite)
+        if (db.isDatabaseAvailable()) {
           await db.saveMessages(messages);
           console.log('[App] ✅ Messages saved to database');
+        } else {
+          // Browser mode: save to localStorage
+          localStorage.setItem('strata_messages', JSON.stringify(messages));
+          console.log('[App] ✅ Messages saved to localStorage');
         }
       } catch (error) {
         console.error('[App] ❌ Failed to save messages:', error);
@@ -211,17 +326,15 @@ const AppContent: React.FC = () => {
 
     const saveActiveProject = async () => {
       try {
-        const isElectron = typeof window !== 'undefined' && window.electron !== undefined;
-
-        if (isElectron) {
-          // Electron mode: save to localStorage
-          if (activeProjectId) {
-            localStorage.setItem('strata_activeProject', activeProjectId);
-          }
-        } else {
-          // Browser mode: save to PGlite
+        // Check if database is available (Electron mode with SQLite)
+        if (db.isDatabaseAvailable()) {
           if (activeProjectId) {
             await db.setAppState('activeProject', activeProjectId);
+          }
+        } else {
+          // Browser mode: save to localStorage
+          if (activeProjectId) {
+            localStorage.setItem('strata_activeProject', activeProjectId);
           }
         }
       } catch (error) {
@@ -237,14 +350,12 @@ const AppContent: React.FC = () => {
 
     const saveDarkMode = async () => {
       try {
-        const isElectron = typeof window !== 'undefined' && window.electron !== undefined;
-
-        if (isElectron) {
-          // Electron mode: save to localStorage
-          localStorage.setItem('strata_darkMode', isDarkMode.toString());
-        } else {
-          // Browser mode: save to PGlite
+        // Check if database is available (Electron mode with SQLite)
+        if (db.isDatabaseAvailable()) {
           await db.setAppState('darkMode', isDarkMode.toString());
+        } else {
+          // Browser mode: save to localStorage
+          localStorage.setItem('strata_darkMode', isDarkMode.toString());
         }
       } catch (error) {
         console.error('[App] ❌ Failed to save dark mode:', error);
@@ -300,6 +411,10 @@ const AppContent: React.FC = () => {
     ));
   };
 
+  const handleDeleteMessage = (id: string) => {
+    setMessages(prev => prev.filter(msg => msg.id !== id));
+  };
+
   const handleOrganizeInbox = async () => {
     setIsOrganizing(true);
     setTimeout(async () => {
@@ -344,6 +459,73 @@ const AppContent: React.FC = () => {
   };
 
   const toggleTheme = () => setIsDarkMode(!isDarkMode);
+
+  // Global keyboard shortcuts
+  useKeyboardShortcuts([
+    {
+      key: 'k',
+      ctrl: true,
+      description: 'Quick search (focus search box)',
+      handler: () => {
+        searchInputRef.current?.focus();
+      }
+    },
+    {
+      key: 'n',
+      ctrl: true,
+      description: 'New note (focus message input)',
+      handler: () => {
+        messageInputRef.current?.focus();
+      }
+    },
+    {
+      key: ',',
+      ctrl: true,
+      description: 'Open settings',
+      handler: () => {
+        setIsSettingsOpen(true);
+      }
+    },
+    {
+      key: '/',
+      ctrl: true,
+      description: 'Toggle sidebar visibility',
+      handler: () => {
+        setIsSidebarVisible(prev => !prev);
+      }
+    },
+    {
+      key: 'b',
+      ctrl: true,
+      description: 'Toggle dark/light mode',
+      handler: () => {
+        toggleTheme();
+      }
+    },
+    {
+      key: '?',
+      shift: true,
+      description: 'Show keyboard shortcuts help',
+      handler: () => {
+        setShowShortcutHelp(prev => !prev);
+      },
+      preventDefault: true
+    },
+    {
+      key: 'Escape',
+      description: 'Close modals and panels',
+      handler: () => {
+        if (showShortcutHelp) {
+          setShowShortcutHelp(false);
+        } else if (isSettingsOpen) {
+          setIsSettingsOpen(false);
+        } else if (rightPanelMode !== 'collapsed') {
+          setRightPanelMode('collapsed');
+        }
+      },
+      preventDefault: false
+    }
+  ], !isSettingsOpen && !showShortcutHelp); // Disable when modals are open
 
   const handleAddProject = (title: string, description?: string, attachments?: Attachment[]) => {
     const newProject: TaskNode = {
@@ -535,35 +717,39 @@ const AppContent: React.FC = () => {
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
       <div className={isDarkMode ? 'dark' : ''}>
         <div className="flex h-screen w-screen overflow-hidden bg-stone-50 dark:bg-basalt-900 transition-colors duration-300">
-          <Sidebar
-            tasks={tasks}
-            inboxCount={inboxCount}
-            activeProjectId={activeProjectId}
-            onSelectProject={(id, task) => {
-              setActiveProjectId(id);
-              if (task) {
-                const isProject = task.id.startsWith('project-') || !task.id.startsWith('task-');
-                setCopilotContext({
-                  type: isProject ? 'project' : 'task',
-                  id: task.id,
-                  title: task.title,
-                  data: task
-                });
-              } else {
-                setCopilotContext(null);
-              }
-            }}
-            isDarkMode={isDarkMode}
-            toggleTheme={toggleTheme}
-            onSearch={setSearchQuery}
-            onOpenSettings={() => setIsSettingsOpen(true)}
-            onAddProject={handleAddProject}
-            onAddTask={handleAddTask}
-            onAddMessage={handleAddMessage}
-            onDeleteProject={handleDeleteProject}
-            onUpdateProject={handleUpdateProject}
-            onReorderTasks={handleReorderTasks}
-          />
+          {isSidebarVisible && (
+            <Sidebar
+              tasks={tasks}
+              messages={messages}
+              inboxCount={inboxCount}
+              activeProjectId={activeProjectId}
+              onSelectProject={(id, task) => {
+                setActiveProjectId(id);
+                if (task) {
+                  const isProject = task.id.startsWith('project-') || !task.id.startsWith('task-');
+                  setCopilotContext({
+                    type: isProject ? 'project' : 'task',
+                    id: task.id,
+                    title: task.title,
+                    data: task
+                  });
+                } else {
+                  setCopilotContext(null);
+                }
+              }}
+              isDarkMode={isDarkMode}
+              toggleTheme={toggleTheme}
+              onSearch={setSearchQuery}
+              onOpenSettings={() => setIsSettingsOpen(true)}
+              onAddProject={handleAddProject}
+              onAddTask={handleAddTask}
+              onAddMessage={handleAddMessage}
+              onDeleteProject={handleDeleteProject}
+              onUpdateProject={handleUpdateProject}
+              onReorderTasks={handleReorderTasks}
+              searchInputRef={searchInputRef}
+            />
+          )}
 
           <main className="flex-1 flex flex-col relative min-w-0">
             <MessageStream
@@ -575,10 +761,12 @@ const AppContent: React.FC = () => {
               onSelectMessage={handleSelectMessage}
               onUpdateMessage={handleUpdateMessage}
               onArchiveMessage={handleArchiveMessage}
+              onDeleteMessage={handleDeleteMessage}
               onOrganizeInbox={handleOrganizeInbox}
               onApplyOrganization={handleApplyOrganization}
               isOrganizing={isOrganizing}
               className="flex-1"
+              messageInputRef={messageInputRef}
             />
           </main>
 
@@ -589,10 +777,14 @@ const AppContent: React.FC = () => {
             context={copilotContext}
             onCitationClick={handleCitationClick}
             messages={messages}
+            tasks={tasks}
           />
         </div>
 
         <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+
+        {/* Keyboard Shortcuts Help Panel */}
+        {showShortcutHelp && <ShortcutHelpPanel onClose={() => setShowShortcutHelp(false)} />}
       </div>
     </DndContext>
   );
