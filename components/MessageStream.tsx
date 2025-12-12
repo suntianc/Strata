@@ -136,7 +136,7 @@ const MessageCard: React.FC<{
           <div className="flex justify-between items-start mb-2">
             <div className="flex items-center gap-2">
               <span className="text-xs text-stone-400 dark:text-stone-500 flex items-center gap-1 font-mono">
-                {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                {(message.timestamp instanceof Date ? message.timestamp : new Date(message.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </span>
               {message.version > 1 && (
                 <span className="text-[9px] text-stone-400 bg-stone-100 dark:bg-basalt-700 px-1 rounded">v{message.version}</span>
@@ -461,15 +461,17 @@ export const MessageStream: React.FC<MessageStreamProps> = ({
   // Group messages by date (Strata layers)
   const groupedMessages = useMemo(() => {
     const groups: { date: string; msgs: Message[] }[] = [];
-    
+
     messages.forEach(msg => {
       const locale = language === 'zh' ? 'zh-CN' : 'en-US';
-      const dateKey = msg.timestamp.toLocaleDateString(locale, { 
-        weekday: 'short', 
-        month: 'short', 
-        day: 'numeric' 
+      // Ensure timestamp is a Date object
+      const timestamp = msg.timestamp instanceof Date ? msg.timestamp : new Date(msg.timestamp);
+      const dateKey = timestamp.toLocaleDateString(locale, {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric'
       });
-      
+
       const lastGroup = groups[groups.length - 1];
       if (lastGroup && lastGroup.date === dateKey) {
         lastGroup.msgs.push(msg);
