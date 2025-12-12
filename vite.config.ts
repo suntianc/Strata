@@ -12,12 +12,12 @@ export default defineConfig(({ mode }) => {
     // Check if we're building for Electron
     const isElectron = process.env.VITE_ELECTRON === 'true';
 
-    const plugins = [react()];
+    const plugins: any[] = [react()];
 
     // Only load Electron plugins when explicitly building for Electron
     if (isElectron) {
       plugins.push(
-        electron([
+        ...electron([
           {
             // Main process entry
             entry: 'electron/main.ts',

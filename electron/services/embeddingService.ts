@@ -59,7 +59,7 @@ export class EmbeddingService {
       });
 
       // Convert to array
-      const embedding = Array.from(output.data);
+      const embedding = Array.from(output.data) as number[];
 
       console.log(`[EmbeddingService] ✅ Generated embedding (${embedding.length} dims) for text: "${cleanText.substring(0, 50)}..."`);
 

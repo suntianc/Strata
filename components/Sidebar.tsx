@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Layers, Inbox, ChevronRight, ChevronDown, Settings, Search, Circle, Disc, AlertCircle, CheckCircle2, Moon, Sun, LayoutGrid, Globe, Plus, X, Trash2, Edit3, Archive, GripVertical, Paperclip, FileText } from 'lucide-react';
+import { Layers, Inbox, ChevronRight, ChevronDown, Settings, Search, Circle, Disc, AlertCircle, CheckCircle2, Moon, Sun, LayoutGrid, Globe, Plus, X, Trash2, Edit3, Archive, GripVertical, Paperclip, FileText, Download } from 'lucide-react';
 import { TaskNode, Message, Attachment } from '../types';
 import { useTranslation } from '../contexts/LanguageContext';
 import { useSettings } from '../contexts/SettingsContext';
@@ -15,6 +15,7 @@ import { CSS } from '@dnd-kit/utilities';
 
 interface SidebarProps {
   tasks: TaskNode[];
+  messages: Message[];
   inboxCount: number;
   onSelectProject: (id: string | null, task?: TaskNode | null) => void; // 🔥 Updated: pass task data
   activeProjectId: string | null;
@@ -28,6 +29,7 @@ interface SidebarProps {
   onDeleteProject: (id: string) => void;
   onUpdateProject: (id: string, updates: Partial<TaskNode>) => void;
   onReorderTasks: (reorderedTasks: TaskNode[]) => void;
+  searchInputRef?: React.RefObject<HTMLInputElement>;
 }
 
 const TreeNode: React.FC<{
@@ -40,7 +42,9 @@ const TreeNode: React.FC<{
   onAddTask: (parentId: string, title: string, description?: string, attachments?: Attachment[]) => void;
   onDeleteProject: (id: string) => void;
   onUpdateProject: (id: string, updates: Partial<TaskNode>) => void;
-}> = ({ node, level, activeId, openContextMenuId, setOpenContextMenuId, onSelect, onAddTask, onDeleteProject, onUpdateProject }) => {
+  messages: Message[];
+  allTasks: TaskNode[];
+}> = ({ node, level, activeId, openContextMenuId, setOpenContextMenuId, onSelect, onAddTask, onDeleteProject, onUpdateProject, messages, allTasks }) => {
   const [expanded, setExpanded] = useState(node.expanded ?? true);
   const [isAddingTask, setIsAddingTask] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
@@ -99,7 +103,7 @@ const TreeNode: React.FC<{
     const files = e.target.files;
     if (!files) return;
 
-    const newAttachments: Attachment[] = Array.from(files).map(file => {
+    const newAttachments: Attachment[] = Array.from(files).map((file: File) => {
       const ext = file.name.split('.').pop()?.toLowerCase() || '';
       let type: Attachment['type'] = 'file';
 
@@ -199,6 +203,23 @@ const TreeNode: React.FC<{
     setOpenContextMenuId(null); // 🔥 Close menu
   };
 
+  // Export handlers
+  const handleExportMarkdown = async () => {
+    setOpenContextMenuId(null);
+  };
+
+  const handleExportPDF = async () => {
+    setOpenContextMenuId(null);
+  };
+
+  const handleExportJSON = async () => {
+    setOpenContextMenuId(null);
+  };
+
+  const handleExportZIP = async () => {
+    setOpenContextMenuId(null);
+  };
+
   // Close context menu when clicking outside
   useEffect(() => {
     const handleClickOutside = () => setOpenContextMenuId(null);
@@ -264,6 +285,42 @@ const TreeNode: React.FC<{
             <CheckCircle2 size={12} className="text-stone-400 dark:text-stone-500" />
             <span>Completed</span>
             {node.status === 'completed' && <CheckCircle2 size={12} className="ml-auto text-teal-600 dark:text-teal-400" />}
+          </button>
+
+          {/* Export submenu */}
+          <div className="border-t border-stone-100 dark:border-basalt-700 my-1" />
+          <div className="px-3 py-1 text-xs font-bold text-stone-400 dark:text-stone-600 uppercase">Export</div>
+
+          <button
+            onClick={handleExportMarkdown}
+            className="w-full px-3 py-2 text-left text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-basalt-700 flex items-center gap-2 transition-colors"
+          >
+            <Download size={12} />
+            <span>Export as Markdown</span>
+          </button>
+
+          <button
+            onClick={handleExportPDF}
+            className="w-full px-3 py-2 text-left text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-basalt-700 flex items-center gap-2 transition-colors"
+          >
+            <Download size={12} />
+            <span>Export as PDF</span>
+          </button>
+
+          <button
+            onClick={handleExportJSON}
+            className="w-full px-3 py-2 text-left text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-basalt-700 flex items-center gap-2 transition-colors"
+          >
+            <Download size={12} />
+            <span>Export as JSON</span>
+          </button>
+
+          <button
+            onClick={handleExportZIP}
+            className="w-full px-3 py-2 text-left text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-basalt-700 flex items-center gap-2 transition-colors"
+          >
+            <Download size={12} />
+            <span>Export as ZIP</span>
           </button>
 
           {/* Delete */}
@@ -531,6 +588,8 @@ const TreeNode: React.FC<{
               onAddTask={onAddTask}
               onDeleteProject={onDeleteProject}
               onUpdateProject={onUpdateProject}
+              messages={messages}
+              allTasks={allTasks}
             />
           ))}
         </div>
@@ -541,6 +600,7 @@ const TreeNode: React.FC<{
 
 export const Sidebar: React.FC<SidebarProps> = ({
   tasks,
+  messages,
   inboxCount,
   onSelectProject,
   activeProjectId,
@@ -553,7 +613,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onAddMessage, // 🔥 New
   onDeleteProject,
   onUpdateProject,
-  onReorderTasks
+  onReorderTasks,
+  searchInputRef
 }) => {
   const { t, language, setLanguage } = useTranslation();
   const { settings } = useSettings();
@@ -575,7 +636,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const files = e.target.files;
     if (!files) return;
 
-    const newAttachments: Attachment[] = Array.from(files).map(file => {
+    const newAttachments: Attachment[] = Array.from(files).map((file: File) => {
       const ext = file.name.split('.').pop()?.toLowerCase() || '';
       let type: Attachment['type'] = 'file';
 
@@ -652,8 +713,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="p-4">
         <div className="relative group">
           <Search className="absolute left-2.5 top-2.5 text-stone-400 group-hover:text-stone-600 dark:group-hover:text-stone-300 transition-colors" size={14} />
-          <input 
-            type="text" 
+          <input
+            ref={searchInputRef}
+            type="text"
             onChange={(e) => onSearch(e.target.value)}
             placeholder={t('searchPlaceholder')}
             className="w-full bg-white dark:bg-basalt-900 border border-stone-200 dark:border-basalt-700 rounded-md py-2 pl-9 pr-3 text-sm text-stone-800 dark:text-stone-200 placeholder-stone-400 dark:placeholder-stone-600 focus:outline-none focus:border-terracotta-500 dark:focus:border-terracotta-500 focus:ring-1 focus:ring-terracotta-500/20 transition-all shadow-sm"
@@ -833,6 +895,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onAddTask={onAddTask}
                 onDeleteProject={onDeleteProject}
                 onUpdateProject={onUpdateProject}
+                messages={messages}
+                allTasks={tasks}
               />
             ))}
           </SortableContext>
