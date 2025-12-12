@@ -276,7 +276,9 @@ ${contextStr ? `Context Data (Current layer):\n${contextStr}\n\n` : ''}`;
                           <div className="mt-1"><Clock size={14} className="text-stone-400" /></div>
                           <div>
                             <div className="text-xs font-medium text-stone-500 dark:text-stone-400">{t('timestamp')}</div>
-                            <div className="text-sm text-stone-800 dark:text-stone-200">{contextMessage.timestamp.toLocaleString()}</div>
+                            <div className="text-sm text-stone-800 dark:text-stone-200">
+                              {(contextMessage.timestamp instanceof Date ? contextMessage.timestamp : new Date(contextMessage.timestamp)).toLocaleString()}
+                            </div>
                           </div>
                        </div>
                        <div className="flex items-start gap-3">
@@ -301,7 +303,9 @@ ${contextStr ? `Context Data (Current layer):\n${contextStr}\n\n` : ''}`;
                           const versionNum = contextMessage.version - i;
                           const isCurrent = versionNum === contextMessage.version;
                           const hoursAgo = i * 2;
-                          const versionTimestamp = new Date(contextMessage.timestamp.getTime() - hoursAgo * 60 * 60 * 1000);
+                          // Ensure timestamp is a Date object
+                          const baseTimestamp = contextMessage.timestamp instanceof Date ? contextMessage.timestamp : new Date(contextMessage.timestamp);
+                          const versionTimestamp = new Date(baseTimestamp.getTime() - hoursAgo * 60 * 60 * 1000);
 
                           const getRelativeTime = (date: Date) => {
                             const now = new Date();
@@ -351,7 +355,9 @@ ${contextStr ? `Context Data (Current layer):\n${contextStr}\n\n` : ''}`;
                              <div className="mt-1 min-w-[16px]"><FileText size={14} className="text-stone-400 group-hover:text-teal-600 dark:group-hover:text-teal-400" /></div>
                              <div className="overflow-hidden">
                                <div className="text-xs text-stone-700 dark:text-stone-300 font-medium truncate group-hover:text-teal-800 dark:group-hover:text-teal-300">{m.content}</div>
-                               <div className="text-[10px] text-stone-400 mt-0.5">{m.timestamp.toLocaleDateString()}</div>
+                               <div className="text-[10px] text-stone-400 mt-0.5">
+                                 {(m.timestamp instanceof Date ? m.timestamp : new Date(m.timestamp)).toLocaleDateString()}
+                               </div>
                              </div>
                              <ArrowRight size={12} className="text-stone-300 opacity-0 group-hover:opacity-100 ml-auto self-center" />
                           </div>
